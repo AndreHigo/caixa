@@ -1,0 +1,60 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+
+const money = (cents = 0) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(cents) / 100);
+const monthName = (key: string) => new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00`));
+const dateLabel = (value: string | Date) => new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(new Date(value));
+const dateInput = (value?: string | Date) => value ? new Date(value).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+const statusText: Record<string, string> = { PAID: "Pago", PENDING: "Pendente", OPEN: "Fatura aberta", CLOSED: "Fechada", OVERDUE: "Atrasada", RECEIVED: "Recebido" };
+type RequestFn = (body: unknown, method?: string) => Promise<any>;
+type RunFn = (action: () => Promise<unknown>, success: string) => void;
+
+function ActionButton({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
+  return <button type="button" className="compact-button" onClick={onClick}>{children}</button>;
+}
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="quick-field"><span>{label}</span>{children}</label>; }
+function Status({ value }: { value: string }) { return <span className={`badge ${value}`}>{statusText[value] || value}</span>; }
+
+export default function Dashboard({ data, month, goCard, goTransactions, run, request }: { data: any; month: string; goCard: (id: string) => void; goTransactions: () => void; run: RunFn; request: RequestFn }) {
+  const [showForm, setShowForm] = useState(false);
+  const [movement, setMovement] = useState({ name: "", amount: "", dueDate: dateInput(), categoryId: "", type: "OTHER", recurrence: "NONE" });
+  const nextActions = useMemo(() => data.rows.filter((row: any) => row.status !== "PAID" && row.status !== "RECEIVED").sort((a: any, b: any) => +new Date(a.dueDate) - +new Date(b.dueDate)).slice(0, 5), [data.rows]);
+  const recentRows = useMemo(() => [...data.rows].sort((a: any, b: any) => +new Date(b.dueDate) - +new Date(a.dueDate)).slice(0, 5), [data.rows]);
+  const resetForm = () => setMovement({ name: "", amount: "", dueDate: dateInput(), categoryId: "", type: "OTHER", recurrence: "NONE" });
+  const saveMovement = (event: FormEvent) => {
+    event.preventDefault();
+    run(async () => { await request({ resource: "expense", ...movement }, "POST"); resetForm(); setShowForm(false); }, movement.type === "INCOME" ? "Entrada adicionada" : "Gasto adicionado");
+  };
+  const toggleExpense = (row: any) => {
+    const paid = row.status === "PAID";
+    if (row.recurringOccurrenceId) {
+      run(() => request({ resource: "recurringOccurrence", id: row.recurringOccurrenceId, status: paid ? "PENDING" : "PAID" }, "PATCH"), paid ? "Pagamento reaberto" : "Pagamento baixado");
+      return;
+    }
+    if (!row.expenseId) return;
+    run(() => request({ resource: "expense", id: row.expenseId, status: paid ? "PENDING" : "PAID" }, "PATCH"), paid ? "Pagamento reaberto" : "Pagamento baixado");
+  };
+  const toggleLoan = (row: any) => {
+    const loan = data.loans.find((item: any) => item.id === row.loanId);
+    if (!loan) return;
+    const nextPaid = row.status === "PAID" ? Math.max(0, loan.paidInstallments - 1) : Math.min(loan.totalInstallments, loan.paidInstallments + 1);
+    run(() => request({ resource: "loan", id: loan.id, paidInstallments: nextPaid }, "PATCH"), row.status === "PAID" ? "Baixa desfeita" : "Parcela baixada");
+  };
+  const actionLabel = (row: any) => row.kind === "card" ? "Abrir fatura" : row.kind === "loan" ? (row.status === "PAID" ? "Desfazer baixa" : "Dar baixa") : row.kind === "income" ? (row.status === "PAID" ? "Reabrir entrada" : "Confirmar entrada") : (row.status === "PAID" ? "Reabrir pagamento" : "Dar baixa");
+  const performAction = (row: any) => row.kind === "card" ? goCard(row.cardId) : row.kind === "loan" ? toggleLoan(row) : toggleExpense(row);
+
+  return <div className="dashboard">
+    <section className={`dashboard-hero ${data.totals.projectedCashBalanceCents >= 0 ? "positive" : "negative"}`}>
+      <div className="hero-main"><p className="eyebrow">Resumo de {monthName(month)}</p><h2>{data.totals.projectedCashBalanceCents >= 0 ? "Livre depois das contas" : "Falta para pagar tudo"}</h2><strong>{money(Math.abs(data.totals.projectedCashBalanceCents))}</strong><p>{data.totals.projectedCashBalanceCents >= 0 ? "Depois das entradas e saídas cadastradas." : "Ainda falta esse valor para cobrir as saídas."}</p></div>
+      <div className="hero-side"><div><span>Entradas previstas</span><strong>{money(data.totals.incomeCents)}</strong></div><div><span>Crédito recebido</span><strong>{money(data.totals.financingCents)}</strong></div><div><span>Compromissos do mês</span><strong>{money(data.totals.totalCents)}</strong></div></div>
+    </section>
+    <section className="dashboard-section-heading"><div><p className="eyebrow">Próximos compromissos</p><h2>O que vem primeiro</h2><span>As próximas cinco contas ou entradas do mês.</span></div><button className="quick-add-button" onClick={() => { resetForm(); setShowForm(!showForm); }}>{showForm ? "Fechar" : "+ Adicionar"}</button></section>
+    {showForm && <section className="quick-form-card"><div><p className="eyebrow">Novo lançamento</p><h3>Adicionar uma entrada ou saída</h3></div><form onSubmit={saveMovement}><Field label="Tipo"><select value={movement.type} onChange={event => setMovement({ ...movement, type: event.target.value })}><option value="OTHER">Gasto</option><option value="INCOME">Valor a receber</option></select></Field><Field label="Descrição"><input required value={movement.name} onChange={event => setMovement({ ...movement, name: event.target.value })} placeholder="Ex.: Aluguel" /></Field><Field label="Valor"><input required type="number" min="0.01" step="0.01" value={movement.amount} onChange={event => setMovement({ ...movement, amount: event.target.value })} placeholder="0,00" /></Field><Field label="Vencimento"><input required type="date" value={movement.dueDate} onChange={event => setMovement({ ...movement, dueDate: event.target.value })} /></Field><Field label="Categoria"><select value={movement.categoryId} onChange={event => setMovement({ ...movement, categoryId: event.target.value })}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field><Field label="Repetição"><select value={movement.recurrence} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field><div className="quick-form-actions"><button className="quick-add-button" type="submit">Adicionar</button><ActionButton onClick={() => setShowForm(false)}>Cancelar</ActionButton></div></form></section>}
+    <section className="priority-card"><div className="priority-header"><div><h3>Próximos compromissos</h3><span>As cinco próximas datas do mês</span></div>{nextActions.length > 0 && <span className="priority-count">{nextActions.length}</span>}</div>{nextActions.length ? nextActions.map((row: any) => <div className="priority-item" key={row.id}><span className="priority-date">{dateLabel(row.dueDate)}</span><div className="priority-main"><strong>{row.description}</strong><small>{row.category} · {row.kind === "income" || row.kind === "financing" ? "entrada" : "saída"}</small></div><strong className={row.kind === "income" || row.kind === "financing" ? "positive-text" : ""}>{money(row.amountCents)}</strong><Status value={row.status} />{row.kind !== "financing" && <ActionButton onClick={() => performAction(row)}>{actionLabel(row)}</ActionButton>}</div>) : <div className="priority-empty">Nada pendente neste mês. Seu caixa está em dia.</div>}</section>
+    <section className="recent-card"><div className="dashboard-section-heading compact-heading"><div><p className="eyebrow">Resumo rápido</p><h2>Últimos lançamentos</h2><span>Para editar ou remover, abra Lançamentos.</span></div><button className="show-more-inline" onClick={goTransactions}>Ver lançamentos</button></div><div className="compact-list">{recentRows.length ? recentRows.map((row: any) => <div className="compact-row" key={row.id}><span className="compact-dot" style={{ background: row.color || "#82b4ff" }} /><div><strong>{row.description}</strong><small>{row.category} · {dateLabel(row.dueDate)}</small></div><strong className={row.kind === "income" || row.kind === "financing" ? "positive-text" : ""}>{row.kind === "income" || row.kind === "financing" ? "+" : ""}{money(row.amountCents)}</strong><Status value={row.status} />{row.kind === "card" && <ActionButton onClick={() => goCard(row.cardId)}>Abrir</ActionButton>}</div>) : <div className="priority-empty">Nenhum lançamento neste mês.</div>}</div></section>
+    <details className="insights"><summary>Ver análise por categoria e histórico</summary><div className="dashboard-insights"><div className="insight-panel"><div className="insight-heading"><div><p className="eyebrow">Categorias</p><h3>Para onde vai o dinheiro</h3></div><span>mês atual</span></div>{Object.entries(data.categoryTotals).map(([name, value]) => <div className="category-line" key={name}><div><span>{name}</span><strong>{money(Number(value))}</strong></div><i><b style={{ width: `${Math.max(5, (Number(value) / Math.max(1, ...Object.values(data.categoryTotals).map(item => Number(item)))) * 100)}%` }} /></i></div>)}</div><div className="insight-panel"><div className="insight-heading"><div><p className="eyebrow">Histórico</p><h3>Saídas por mês</h3></div><span>últimos meses</span></div><div className="history-bars">{data.history.map((item: any) => <div className="history-bar" key={item.month}><div className="history-track"><b style={{ height: `${Math.max(4, (item.totalCents / Math.max(1, ...data.history.map((entry: any) => entry.totalCents))) * 100)}%` }} /></div><span>{item.month.slice(5)}</span></div>)}</div></div></div></details>
+    <details className="insights"><summary>Ver cronograma completo</summary><div className="insight-grid"><div className="insight-panel"><h3>Saldo ao longo do mês</h3>{data.timeline.slice(0, 10).map((item: any, index: number) => <div className="timeline-line" key={`${item.title}-${index}`}><span>{dateLabel(item.date)}</span><div><strong>{item.title}</strong><small>saldo depois: {money(item.balanceCents)}</small></div></div>)}</div></div></details>
+  </div>;
+}

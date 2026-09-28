@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String     @id @default(cuid())
+  email      String     @unique
+  password   String
+  name       String
+  cards      Card[]
+  loans      Loan[]
+  expenses   Expense[]
+  recurringExpenses RecurringExpense[]
+  categories Category[]
+  createdAt  DateTime   @default(now())
+}
+
+model Card {
+  id          String       @id @default(cuid())
+  userId      String
+  name        String
+  brand       String
+  limitCents  Int          @default(0)
+  closingDay  Int
+  dueDay      Int
+  color       String       @default("#8de0b8")
+  icon        String       @default("card")
+  status      String       @default("ACTIVE")
+  description String?
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchases   CardPurchase[]
+  invoices    CardInvoice[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  @@index([userId, status])
+}
+
+model Category {
+  id        String        @id @default(cuid())
+  userId    String
+  name      String
+  color     String        @default("#8de0b8")
+  icon      String        @default("tag")
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchases CardPurchase[]
+  expenses  Expense[]
+  recurringExpenses RecurringExpense[]
+  @@unique([userId, name])
+}
+
+model CardPurchase {
+  id            String           @id @default(cuid())
+  cardId        String
+  categoryId    String?
+  description   String
+  purchaseDate  DateTime
+  totalCents    Int
+  installments  Int
+  note          String?
+  card          Card             @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  category      Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  rows          CardInstallment[]
+  createdAt     DateTime          @default(now())
+  @@index([cardId, purchaseDate])
+}
+
+model CardInvoice {
+  id             String            @id @default(cuid())
+  cardId         String
+  referenceMonth String
+  closingDate    DateTime
+  dueDate        DateTime
+  totalCents     Int               @default(0)
+  status         String            @default("OPEN")
+  paidAt         DateTime?
+  card           Card              @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  installments   CardInstallment[]
+  @@unique([cardId, referenceMonth])
+}
+
+model CardInstallment {
+  id              String             @id @default(cuid())
+  purchaseId      String
+  invoiceId       String?
+  referenceMonth  String
+  number          Int
+  amountCents     Int
+  status          String             @default("PENDING")
+  purchase        CardPurchase       @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  invoice         CardInvoice?       @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  @@unique([purchaseId, number])
+  @@index([referenceMonth, status])
+}
+
+model Loan {
+  id                 String   @id @default(cuid())
+  userId             String
+  name               String
+  principalCents     Int
+  totalInstallments  Int
+  installmentCents   Int
+  dueDay             Int
+  startDate          DateTime
+  paidInstallments   Int      @default(0)
+  interestRate       Float?
+  status             String   @default("ACTIVE")
+  lastPaidAt         DateTime?
+  notes              String?
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt          DateTime @default(now())
+}
+
+model Expense {
+  id          String        @id @default(cuid())
+  userId      String
+  categoryId  String?
+  name        String
+  amountCents Int
+  dueDate     DateTime
+  status      String        @default("PENDING")
+  paidAt      DateTime?
+  type        String        @default("OTHER")
+  notes       String?
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category    Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt   DateTime      @default(now())
+  @@index([userId, dueDate, status])
+}
+
+model RecurringExpense {
+  id            String                    @id @default(cuid())
+  userId        String
+  categoryId    String?
+  name          String
+  amountCents   Int
+  firstDueDate  DateTime
+  status        String                    @default("ACTIVE")
+  type          String                    @default("OTHER")
+  notes         String?
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category      Category?                 @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  occurrences   RecurringExpenseOccurrence[]
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  @@index([userId, status, firstDueDate])
+}
+
+model RecurringExpenseOccurrence {
+  id           String          @id @default(cuid())
+  recurringId  String
+  referenceMonth String
+  dueDate      DateTime
+  status       String          @default("PENDING")
+  paidAt       DateTime?
+  recurring    RecurringExpense @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+  @@unique([recurringId, referenceMonth])
+  @@index([referenceMonth, status])
+}
