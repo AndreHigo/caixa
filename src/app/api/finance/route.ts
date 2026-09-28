@@ -333,16 +333,14 @@ export async function GET(request: NextRequest) {
         color: "#f6c177",
       }));
 
+    const dayValue = (value: Date | string) => {
+      const date = new Date(value);
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    };
+    const kindPriority = (kind: string) =>
+      kind === "financing" ? 0 : kind === "income" ? 1 : 2;
     const rows = [...cardRows, ...loanRows, ...expenseRows, ...recurringRows, ...financingRows].sort(
-      (a, b) => {
-        const dateDiff = +new Date(a.dueDate) - +new Date(b.dueDate);
-        if (dateDiff !== 0) return dateDiff;
-        if (a.kind === "financing") return -1;
-        if (b.kind === "financing") return 1;
-        if (a.kind === "income") return -1;
-        if (b.kind === "income") return 1;
-        return 0;
-      },
+      (a, b) => dayValue(a.dueDate) - dayValue(b.dueDate) || kindPriority(a.kind) - kindPriority(b.kind),
     );
 
     const categoryTotals = new Map<string, number>();
@@ -389,10 +387,14 @@ export async function GET(request: NextRequest) {
           .reduce((sum, row) => sum + row.amountCents, 0),
     }));
 
-    let balanceCents = 0;
+    const openingBalanceCents = 0;
+    let balanceCents = openingBalanceCents;
     const timeline = rows.map(row => {
       const incoming = row.kind === "income" || row.kind === "financing";
-      balanceCents += incoming ? row.amountCents : -row.amountCents;
+      const restricted = incoming && row.kind === "income" && /vale|aliment/i.test(row.description);
+      const balanceBeforeCents = balanceCents;
+      const changeCents = restricted ? 0 : incoming ? row.amountCents : -row.amountCents;
+      balanceCents += changeCents;
       return {
         date: row.dueDate,
         title: row.description,
@@ -409,7 +411,11 @@ export async function GET(request: NextRequest) {
         amountCents: row.amountCents,
         status: row.status,
         kind: row.kind,
-        balanceCents,
+        direction: incoming ? "INCOME" : "EXPENSE",
+        restricted,
+        balanceBeforeCents,
+        changeCents,
+        balanceAfterCents: balanceCents,
       };
     });
 
@@ -451,6 +457,7 @@ export async function GET(request: NextRequest) {
       invoices: visibleInvoices,
       installments,
       timeline,
+      openingBalanceCents,
       categoryTotals: Object.fromEntries(categoryTotals),
       history,
       totals: {
