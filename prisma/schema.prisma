@@ -107,6 +107,7 @@ model Loan {
   totalInstallments  Int
   installmentCents   Int
   dueDay             Int
+  paymentDay         Int?
   startDate          DateTime
   receivedDate       DateTime?
   paidInstallments   Int      @default(0)
@@ -125,6 +126,7 @@ model Expense {
   name        String
   amountCents Int
   dueDate     DateTime
+  paymentDate DateTime?
   status      String        @default("PENDING")
   paidAt      DateTime?
   type        String        @default("OTHER")
@@ -142,6 +144,7 @@ model RecurringExpense {
   name          String
   amountCents   Int
   firstDueDate  DateTime
+  paymentDay    Int?
   status        String                    @default("ACTIVE")
   type          String                    @default("OTHER")
   notes         String?
@@ -158,6 +161,7 @@ model RecurringExpenseOccurrence {
   recurringId  String
   referenceMonth String
   dueDate      DateTime
+  paymentDate  DateTime?
   status       String          @default("PENDING")
   paidAt       DateTime?
   recurring    RecurringExpense @relation(fields: [recurringId], references: [id], onDelete: Cascade)

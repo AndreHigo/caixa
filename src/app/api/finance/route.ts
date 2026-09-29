@@ -63,6 +63,7 @@ function loanRow(
     totalInstallments: number;
     paidInstallments: number;
     dueDay: number;
+    paymentDay: number | null;
     startDate: Date;
     receivedDate: Date | null;
     status: string;
@@ -92,6 +93,13 @@ function loanRow(
     target.getMonth(),
     Math.min(loan.dueDay, new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()),
   );
+  const paymentDate = loan.paymentDay
+    ? new Date(
+        target.getFullYear(),
+        target.getMonth(),
+        Math.min(loan.paymentDay, new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()),
+      )
+    : dueDate;
 
   return {
     id: `loan-${loan.id}-${referenceMonth}`,
@@ -101,6 +109,7 @@ function loanRow(
     category: "Empréstimo",
     amountCents: loan.installmentCents,
     dueDate,
+    paymentDate,
     status: paid ? "PAID" : dueDate < new Date() ? "OVERDUE" : "PENDING",
     occurrence,
     totalInstallments: loan.totalInstallments,
@@ -121,6 +130,13 @@ function recurringDueDate(firstDueDate: Date, referenceMonth: string) {
   );
 }
 
+function recurringPaymentDate(paymentDay: number | null, dueDate: Date, referenceMonth: string) {
+  if (!paymentDay) return dueDate;
+  const target = monthDate(referenceMonth);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  return new Date(target.getFullYear(), target.getMonth(), Math.min(paymentDay, lastDay), 12);
+}
+
 async function ensureRecurringOccurrence(userId: string, referenceMonth: string) {
   const recurring = await prisma.recurringExpense.findMany({
     where: { userId, status: "ACTIVE" },
@@ -139,11 +155,21 @@ async function ensureRecurringOccurrence(userId: string, referenceMonth: string)
           },
           update: {
             dueDate: recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+            paymentDate: recurringPaymentDate(
+              item.paymentDay,
+              recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+              referenceMonth,
+            ),
           },
           create: {
             recurringId: item.id,
             referenceMonth,
             dueDate: recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+            paymentDate: recurringPaymentDate(
+              item.paymentDay,
+              recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+              referenceMonth,
+            ),
           },
         }),
       ),
@@ -296,7 +322,7 @@ export async function GET(request: NextRequest) {
       description: invoice.card.name,
       category: "Fatura de cartão",
       amountCents: invoice.totalCents,
-      dueDate: invoice.paymentDate || invoice.dueDate,
+      dueDate: invoice.dueDate,
       invoiceDueDate: invoice.dueDate,
       paymentDate: invoice.paymentDate || invoice.dueDate,
       status: invoice.status,
@@ -312,6 +338,7 @@ export async function GET(request: NextRequest) {
       category: expense.type === "INCOME" ? "Entrada" : expense.category?.name || "Avulso",
       amountCents: expense.amountCents,
       dueDate: expense.dueDate,
+      paymentDate: expense.paymentDate || expense.dueDate,
       status: expense.status,
       color: expense.type === "INCOME" ? "#8de0b8" : expense.category?.color || "#9fb1c6",
       paidAt: expense.paidAt,
@@ -327,6 +354,7 @@ export async function GET(request: NextRequest) {
       category: occurrence.recurring.type === "INCOME" ? "Entrada fixa" : occurrence.recurring.category?.name || "Fixo mensal",
       amountCents: occurrence.recurring.amountCents,
       dueDate: occurrence.dueDate,
+      paymentDate: occurrence.paymentDate || occurrence.dueDate,
       status: occurrence.status,
       color: occurrence.recurring.type === "INCOME" ? "#8de0b8" : occurrence.recurring.category?.color || "#9fb1c6",
       paidAt: occurrence.paidAt,
@@ -342,6 +370,7 @@ export async function GET(request: NextRequest) {
         category: "Empréstimo recebido",
         amountCents: loan.principalCents,
         dueDate: loan.receivedDate || loan.startDate,
+        paymentDate: loan.receivedDate || loan.startDate,
         status: "RECEIVED",
         color: "#f6c177",
       }));
@@ -353,7 +382,7 @@ export async function GET(request: NextRequest) {
     const kindPriority = (kind: string) =>
       kind === "financing" ? 0 : kind === "income" ? 1 : 2;
     const rows = [...cardRows, ...loanRows, ...expenseRows, ...recurringRows, ...financingRows].sort(
-      (a, b) => dayValue(a.dueDate) - dayValue(b.dueDate) || kindPriority(a.kind) - kindPriority(b.kind),
+      (a, b) => dayValue(a.paymentDate || a.dueDate) - dayValue(b.paymentDate || b.dueDate) || kindPriority(a.kind) - kindPriority(b.kind),
     );
 
     const categoryTotals = new Map<string, number>();
@@ -409,7 +438,9 @@ export async function GET(request: NextRequest) {
       const changeCents = restricted ? 0 : incoming ? row.amountCents : -row.amountCents;
       balanceCents += changeCents;
       return {
-        date: row.dueDate,
+        date: row.paymentDate || row.dueDate,
+        dueDate: row.dueDate,
+        paymentDate: row.paymentDate || row.dueDate,
         title: row.description,
         subtitle:
           row.kind === "card"
@@ -538,6 +569,7 @@ export async function POST(request: NextRequest) {
       const status = body.status || "PENDING";
       if (body.recurrence === "MONTHLY") {
         const firstDueDate = new Date(`${body.dueDate}T12:00:00`);
+        const paymentDate = body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null;
         const recurring = await prisma.recurringExpense.create({
           data: {
             userId: user.id,
@@ -545,6 +577,7 @@ export async function POST(request: NextRequest) {
             categoryId: body.categoryId || null,
             amountCents: toCents(body.amount),
             firstDueDate,
+            paymentDay: paymentDate ? paymentDate.getDate() : null,
             status: "ACTIVE",
             type: body.type || "OTHER",
             notes: body.notes || null,
@@ -552,6 +585,7 @@ export async function POST(request: NextRequest) {
               create: {
                 referenceMonth: monthKey(firstDueDate),
                 dueDate: firstDueDate,
+                paymentDate: paymentDate || firstDueDate,
                 status,
                 paidAt: status === "PAID" ? new Date() : null,
               },
@@ -569,6 +603,7 @@ export async function POST(request: NextRequest) {
             categoryId: body.categoryId || null,
             amountCents: toCents(body.amount),
             dueDate: new Date(`${body.dueDate}T12:00:00`),
+            paymentDate: body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null,
             status,
             paidAt: status === "PAID" ? new Date() : null,
             type: body.type || "OTHER",
@@ -588,6 +623,7 @@ export async function POST(request: NextRequest) {
             totalInstallments: Number(body.totalInstallments),
             installmentCents: toCents(body.installment),
             dueDay: Number(body.dueDay),
+            paymentDay: body.paymentDay ? Number(body.paymentDay) : null,
             startDate: new Date(`${body.startDate}T12:00:00`),
             receivedDate: body.receivedDate ? new Date(`${body.receivedDate}T12:00:00`) : new Date(`${body.startDate}T12:00:00`),
             interestRate: body.interestRate ? Number(body.interestRate) : null,
@@ -692,6 +728,7 @@ export async function PATCH(request: NextRequest) {
         data.installmentCents = toCents(body.installment);
       }
       if (body.dueDay !== undefined) data.dueDay = Number(body.dueDay);
+      if (body.paymentDay !== undefined) data.paymentDay = body.paymentDay ? Number(body.paymentDay) : null;
       if (body.startDate !== undefined) {
         data.startDate = new Date(`${body.startDate}T12:00:00`);
       }
@@ -729,6 +766,9 @@ export async function PATCH(request: NextRequest) {
             ...(body.dueDate !== undefined
               ? { dueDate: new Date(`${body.dueDate}T12:00:00`) }
               : {}),
+            ...(body.paymentDate !== undefined
+              ? { paymentDate: body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null }
+              : {}),
             ...(body.type !== undefined ? { type: body.type } : {}),
             ...(status !== undefined ? { status, paidAt: status === "PAID" ? new Date() : null } : {}),
           },
@@ -752,6 +792,11 @@ export async function PATCH(request: NextRequest) {
       if (body.categoryId !== undefined) data.categoryId = body.categoryId || null;
       if (body.amount !== undefined) data.amountCents = toCents(body.amount);
       if (body.dueDate !== undefined) data.firstDueDate = new Date(`${body.dueDate}T12:00:00`);
+      if (body.paymentDate !== undefined) {
+        data.paymentDay = body.paymentDate
+          ? new Date(`${body.paymentDate}T12:00:00`).getDate()
+          : null;
+      }
       if (body.type !== undefined) data.type = body.type;
       if (body.status !== undefined) data.status = body.status;
       if (body.notes !== undefined) data.notes = body.notes || null;
@@ -761,10 +806,10 @@ export async function PATCH(request: NextRequest) {
       });
       if (!updated.count) throw new Error("Lançamento fixo não encontrado");
 
-      if (body.dueDate !== undefined) {
+      if (body.dueDate !== undefined || body.paymentDate !== undefined) {
         const recurring = await prisma.recurringExpense.findUnique({
           where: { id: body.id },
-          select: { firstDueDate: true },
+          select: { firstDueDate: true, paymentDay: true },
         });
         if (recurring) {
           const occurrences = await prisma.recurringExpenseOccurrence.findMany({
@@ -778,6 +823,11 @@ export async function PATCH(request: NextRequest) {
                 data: {
                   dueDate: recurringDueDate(
                     new Date(recurring.firstDueDate),
+                    occurrence.referenceMonth,
+                  ),
+                  paymentDate: recurringPaymentDate(
+                    recurring.paymentDay,
+                    recurringDueDate(new Date(recurring.firstDueDate), occurrence.referenceMonth),
                     occurrence.referenceMonth,
                   ),
                 },

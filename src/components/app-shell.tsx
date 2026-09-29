@@ -966,6 +966,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
     totalInstallments: "12",
     installment: "",
     dueDay: "10",
+    paymentDay: "",
     startDate: dateInput(),
     receivedDate: dateInput(),
     interestRate: "",
@@ -974,7 +975,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
   const reset = () => {
     setEditingId(null);
     setShowForm(false);
-    setForm({ name: "", principal: "", totalInstallments: "12", installment: "", dueDay: "10", startDate: dateInput(), receivedDate: dateInput(), interestRate: "" });
+    setForm({ name: "", principal: "", totalInstallments: "12", installment: "", dueDay: "10", paymentDay: "", startDate: dateInput(), receivedDate: dateInput(), interestRate: "" });
   };
 
   const edit = (loan: any) => {
@@ -986,6 +987,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
       totalInstallments: String(loan.totalInstallments),
       installment: String(loan.installmentCents / 100),
       dueDay: String(loan.dueDay),
+      paymentDay: loan.paymentDay ? String(loan.paymentDay) : "",
       startDate: dateInput(loan.startDate),
       receivedDate: dateInput(loan.receivedDate || loan.startDate),
       interestRate: loan.interestRate ? String(loan.interestRate) : "",
@@ -1029,6 +1031,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
               <Field label="Número de parcelas"><input required type="number" min="1" value={form.totalInstallments} onChange={event => setForm({ ...form, totalInstallments: event.target.value })} /></Field>
               <Field label="Valor da parcela"><input required type="number" min="0.01" step="0.01" value={form.installment} onChange={event => setForm({ ...form, installment: event.target.value })} /></Field>
               <Field label="Dia de vencimento"><input required type="number" min="1" max="31" value={form.dueDay} onChange={event => setForm({ ...form, dueDay: event.target.value })} /></Field>
+              <Field label="Dia de pagamento programado"><input type="number" min="1" max="31" value={form.paymentDay} onChange={event => setForm({ ...form, paymentDay: event.target.value })} placeholder="Igual ao vencimento" /></Field>
               <Field label="Data da primeira parcela"><input required type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} /></Field>
               <Field label="Data em que recebeu o dinheiro"><input required type="date" value={form.receivedDate} onChange={event => setForm({ ...form, receivedDate: event.target.value })} /></Field>
               <Field label="Juros (% opcional)"><input type="number" min="0" step="0.01" value={form.interestRate} onChange={event => setForm({ ...form, interestRate: event.target.value })} /></Field>
@@ -1042,7 +1045,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
             {data.loans.length ? data.loans.map((loan: any) => (
               <div className="row row-interactive" key={loan.id}>
                 <span className="row-dot" style={{ background: "#f6c177" }} />
-                <div className="row-main"><strong>{loan.name}</strong><small>{loan.paidInstallments}/{loan.totalInstallments} parcelas pagas · recebido em {dateLabel(loan.receivedDate || loan.startDate)} · vence dia {loan.dueDay} · saldo contratado {money(Math.max(0, loan.principalCents - loan.paidInstallments * loan.installmentCents))}</small></div>
+                <div className="row-main"><strong>{loan.name}</strong><small>{loan.paidInstallments}/{loan.totalInstallments} parcelas pagas · recebido em {dateLabel(loan.receivedDate || loan.startDate)} · vence dia {loan.dueDay} · paga dia {loan.paymentDay || loan.dueDay} · saldo contratado {money(Math.max(0, loan.principalCents - loan.paidInstallments * loan.installmentCents))}</small></div>
                 <span className="row-value">{money(loan.installmentCents)}</span>
                 <Status value={loan.status} />
                 <div className="row-actions">

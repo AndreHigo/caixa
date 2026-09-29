@@ -15,6 +15,14 @@ const dateLabel = (value: string | Date) =>
 const dateInput = (value?: string | Date) =>
   value ? new Date(value).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
+const scheduleText = (row: any) => {
+  if (row.kind === "income") return `entra em ${dateLabel(row.dueDate)}`;
+  if (row.kind === "financing") return `crédito recebido em ${dateLabel(row.dueDate)}`;
+  const due = dateLabel(row.dueDate);
+  const payment = dateLabel(row.paymentDate || row.dueDate);
+  return due === payment ? `vence em ${due}` : `vence em ${due} · paga em ${payment}`;
+};
+
 const statusText: Record<string, string> = {
   PAID: "Pago",
   PENDING: "Pendente",
@@ -78,6 +86,7 @@ export default function Transactions({
     name: "",
     amount: "",
     dueDate: dateInput(),
+    paymentDate: "",
     categoryId: "",
     type: "OTHER",
     recurrence: "NONE",
@@ -96,7 +105,7 @@ export default function Transactions({
   const clearForm = () => {
     setEditingId(null);
     setEditingRecurringId(null);
-    setMovement({ name: "", amount: "", dueDate: dateInput(), categoryId: "", type: "OTHER", recurrence: "NONE" });
+    setMovement({ name: "", amount: "", dueDate: dateInput(), paymentDate: "", categoryId: "", type: "OTHER", recurrence: "NONE" });
   };
 
   const editMovement = (row: any) => {
@@ -109,6 +118,7 @@ export default function Transactions({
         name: recurring.name,
         amount: String(recurring.amountCents / 100),
         dueDate: dateInput(recurring.firstDueDate),
+        paymentDate: recurring.paymentDay ? `${month}-${String(recurring.paymentDay).padStart(2, "0")}` : "",
         categoryId: recurring.categoryId || "",
         type: recurring.type || "OTHER",
         recurrence: "MONTHLY",
@@ -124,6 +134,7 @@ export default function Transactions({
       name: expense.name,
       amount: String(expense.amountCents / 100),
       dueDate: dateInput(expense.dueDate),
+      paymentDate: expense.paymentDate ? dateInput(expense.paymentDate) : "",
       categoryId: expense.categoryId || "",
       type: expense.type || "OTHER",
       recurrence: "NONE",
@@ -221,6 +232,7 @@ export default function Transactions({
               <Field label="Descrição"><input required value={movement.name} onChange={event => setMovement({ ...movement, name: event.target.value })} placeholder="Ex.: Aluguel" /></Field>
               <Field label="Valor"><input required type="number" min="0.01" step="0.01" value={movement.amount} onChange={event => setMovement({ ...movement, amount: event.target.value })} placeholder="0,00" /></Field>
               <Field label="Vencimento"><input required type="date" value={movement.dueDate} onChange={event => setMovement({ ...movement, dueDate: event.target.value })} /></Field>
+              <Field label="Pagamento programado (opcional)"><input type="date" value={movement.paymentDate} onChange={event => setMovement({ ...movement, paymentDate: event.target.value })} /></Field>
               <Field label="Categoria"><select value={movement.categoryId} onChange={event => setMovement({ ...movement, categoryId: event.target.value })}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
               <Field label="Repetição"><select value={movement.recurrence} disabled={Boolean(editingId || editingRecurringId)} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field>
             </div>
@@ -240,7 +252,7 @@ export default function Transactions({
           {rows.length ? rows.map((row: any) => (
             <div className="row row-interactive transaction-row" key={row.id}>
               <span className="row-dot" style={{ background: row.color || "#82b4ff" }} />
-              <div className="row-main"><strong>{row.description}</strong><small>{row.category} · {row.recurring ? "fixo mensal · " : ""}{row.kind === "income" || row.kind === "financing" ? "entra" : row.kind === "card" ? "pagamento programado para" : "vence"} em {dateLabel(row.dueDate)}</small></div>
+              <div className="row-main"><strong>{row.description}</strong><small>{row.category} · {row.recurring ? "fixo mensal · " : ""}{scheduleText(row)}</small></div>
               <span className={`row-value ${row.kind === "income" || row.kind === "financing" ? "positive-text" : ""}`}>{row.kind === "income" || row.kind === "financing" ? "+" : ""}{money(row.amountCents)}</span>
               <Status value={row.status} />
               <div className="row-actions">
