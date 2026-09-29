@@ -134,7 +134,9 @@ async function ensureRecurringOccurrence(userId: string, referenceMonth: string)
               referenceMonth,
             },
           },
-          update: {},
+          update: {
+            dueDate: recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+          },
           create: {
             recurringId: item.id,
             referenceMonth,
@@ -734,12 +736,39 @@ export async function PATCH(request: NextRequest) {
       if (body.type !== undefined) data.type = body.type;
       if (body.status !== undefined) data.status = body.status;
       if (body.notes !== undefined) data.notes = body.notes || null;
-      return NextResponse.json(
-        await prisma.recurringExpense.updateMany({
-          where: { id: body.id, userId: user.id },
-          data,
-        }),
-      );
+      const updated = await prisma.recurringExpense.updateMany({
+        where: { id: body.id, userId: user.id },
+        data,
+      });
+      if (!updated.count) throw new Error("Lançamento fixo não encontrado");
+
+      if (body.dueDate !== undefined) {
+        const recurring = await prisma.recurringExpense.findUnique({
+          where: { id: body.id },
+          select: { firstDueDate: true },
+        });
+        if (recurring) {
+          const occurrences = await prisma.recurringExpenseOccurrence.findMany({
+            where: { recurringId: body.id },
+            select: { id: true, referenceMonth: true },
+          });
+          await prisma.$transaction(
+            occurrences.map(occurrence =>
+              prisma.recurringExpenseOccurrence.update({
+                where: { id: occurrence.id },
+                data: {
+                  dueDate: recurringDueDate(
+                    new Date(recurring.firstDueDate),
+                    occurrence.referenceMonth,
+                  ),
+                },
+              }),
+            ),
+          );
+        }
+      }
+
+      return NextResponse.json(updated);
     }
 
     if (body.resource === "category") {
