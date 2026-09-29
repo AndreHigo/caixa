@@ -227,9 +227,9 @@ export default function AppShell() {
             {monthMenuOpen && (
               <div className="month-menu" role="menu">
                 {Array.from({ length: 18 }, (_, index) => {
-                  const date = new Date();
-                  date.setMonth(date.getMonth() - 6 + index);
-                  const value = date.toISOString().slice(0, 7);
+                  const now = new Date();
+                  const date = new Date(now.getFullYear(), now.getMonth() - 6 + index, 1, 12);
+                  const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
                   return (
                     <button
                       key={value}

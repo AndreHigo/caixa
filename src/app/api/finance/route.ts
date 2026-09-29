@@ -318,7 +318,15 @@ export async function GET(request: NextRequest) {
       }),
       prisma.cardInstallment.findMany({
         where: {
-          purchase: { card: { userId: user.id } },
+          OR: [
+            {
+              referenceMonth: selectedMonth,
+              purchase: { card: { userId: user.id }, isRecurring: true },
+            },
+            {
+              purchase: { card: { userId: user.id }, isRecurring: false },
+            },
+          ],
           status: { not: "PAID" },
         },
         include: { purchase: { select: { cardId: true } } },
