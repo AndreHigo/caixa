@@ -137,6 +137,12 @@ function recurringPaymentDate(paymentDay: number | null, dueDate: Date, referenc
   return new Date(target.getFullYear(), target.getMonth(), Math.min(paymentDay, lastDay), 12);
 }
 
+function flexibleScheduleDate(dueDate: Date, afterDay: number | null) {
+  const day = Math.max(0, Math.min(afterDay ?? 10, 27));
+  const lastDay = new Date(dueDate.getFullYear(), dueDate.getMonth() + 1, 0).getDate();
+  return new Date(dueDate.getFullYear(), dueDate.getMonth(), Math.min(day + 1, lastDay), 12);
+}
+
 async function ensureRecurringOccurrence(userId: string, referenceMonth: string) {
   const recurring = await prisma.recurringExpense.findMany({
     where: { userId, status: "ACTIVE" },
@@ -331,6 +337,10 @@ export async function GET(request: NextRequest) {
     }));
 
     const expenseRows = expenses.map(expense => ({
+      scheduleDate:
+        expense.scheduleType === "AFTER_DAY"
+          ? flexibleScheduleDate(expense.dueDate, expense.scheduleAfterDay)
+          : expense.paymentDate || expense.dueDate,
       id: `expense-${expense.id}`,
       kind: expense.type === "INCOME" ? ("income" as const) : ("expense" as const),
       expenseId: expense.id,
@@ -338,7 +348,9 @@ export async function GET(request: NextRequest) {
       category: expense.type === "INCOME" ? "Entrada" : expense.category?.name || "Avulso",
       amountCents: expense.amountCents,
       dueDate: expense.dueDate,
-      paymentDate: expense.paymentDate || expense.dueDate,
+      paymentDate: expense.scheduleType === "AFTER_DAY" ? null : expense.paymentDate || expense.dueDate,
+      scheduleType: expense.scheduleType,
+      scheduleAfterDay: expense.scheduleAfterDay,
       status: expense.status,
       color: expense.type === "INCOME" ? "#8de0b8" : expense.category?.color || "#9fb1c6",
       paidAt: expense.paidAt,
@@ -375,6 +387,7 @@ export async function GET(request: NextRequest) {
         color: "#f6c177",
       }));
 
+    const scheduleDateForRow = (row: any) => row.scheduleDate || row.paymentDate || row.dueDate;
     const dayValue = (value: Date | string) => {
       const date = new Date(value);
       return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -382,7 +395,7 @@ export async function GET(request: NextRequest) {
     const kindPriority = (kind: string) =>
       kind === "financing" ? 0 : kind === "income" ? 1 : 2;
     const rows = [...cardRows, ...loanRows, ...expenseRows, ...recurringRows, ...financingRows].sort(
-      (a, b) => dayValue(a.paymentDate || a.dueDate) - dayValue(b.paymentDate || b.dueDate) || kindPriority(a.kind) - kindPriority(b.kind),
+      (a, b) => dayValue(scheduleDateForRow(a)) - dayValue(scheduleDateForRow(b)) || kindPriority(a.kind) - kindPriority(b.kind),
     );
 
     const categoryTotals = new Map<string, number>();
@@ -438,9 +451,13 @@ export async function GET(request: NextRequest) {
       const changeCents = restricted ? 0 : incoming ? row.amountCents : -row.amountCents;
       balanceCents += changeCents;
       return {
-        date: row.paymentDate || row.dueDate,
+        date: scheduleDateForRow(row),
         dueDate: row.dueDate,
         paymentDate: row.paymentDate || row.dueDate,
+        scheduleDate: scheduleDateForRow(row),
+        scheduleType: (row as any).scheduleType,
+        scheduleAfterDay: (row as any).scheduleAfterDay,
+        flexibleDate: (row as any).scheduleType === "AFTER_DAY",
         title: row.description,
         subtitle:
           row.kind === "card"
@@ -595,6 +612,13 @@ export async function POST(request: NextRequest) {
         });
         return NextResponse.json(recurring);
       }
+      const scheduleType = body.scheduleType === "AFTER_DAY" ? "AFTER_DAY" : "FIXED";
+      const dueDate = scheduleType === "AFTER_DAY"
+        ? new Date(`${String(body.dueDate).slice(0, 7)}-01T12:00:00`)
+        : new Date(`${body.dueDate}T12:00:00`);
+      const scheduleAfterDay = scheduleType === "AFTER_DAY"
+        ? Math.max(0, Math.min(27, Number(body.scheduleAfterDay ?? 10)))
+        : null;
       return NextResponse.json(
         await prisma.expense.create({
           data: {
@@ -602,8 +626,10 @@ export async function POST(request: NextRequest) {
             name: body.name,
             categoryId: body.categoryId || null,
             amountCents: toCents(body.amount),
-            dueDate: new Date(`${body.dueDate}T12:00:00`),
-            paymentDate: body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null,
+            dueDate,
+            paymentDate: scheduleType === "FIXED" && body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null,
+            scheduleType,
+            scheduleAfterDay,
             status,
             paidAt: status === "PAID" ? new Date() : null,
             type: body.type || "OTHER",
@@ -756,6 +782,12 @@ export async function PATCH(request: NextRequest) {
 
     if (body.resource === "expense") {
       const status = body.status;
+      const scheduleType = body.scheduleType === "AFTER_DAY" ? "AFTER_DAY" : body.scheduleType === "FIXED" ? "FIXED" : undefined;
+      const dueDate = body.dueDate !== undefined
+        ? scheduleType === "AFTER_DAY"
+          ? new Date(`${String(body.dueDate).slice(0, 7)}-01T12:00:00`)
+          : new Date(`${body.dueDate}T12:00:00`)
+        : undefined;
       return NextResponse.json(
         await prisma.expense.updateMany({
           where: { id: body.id, userId: user.id },
@@ -763,12 +795,16 @@ export async function PATCH(request: NextRequest) {
             ...(body.name !== undefined ? { name: body.name } : {}),
             ...(body.categoryId !== undefined ? { categoryId: body.categoryId || null } : {}),
             ...(body.amount !== undefined ? { amountCents: toCents(body.amount) } : {}),
-            ...(body.dueDate !== undefined
-              ? { dueDate: new Date(`${body.dueDate}T12:00:00`) }
-              : {}),
+            ...(dueDate ? { dueDate } : {}),
             ...(body.paymentDate !== undefined
-              ? { paymentDate: body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null }
+              ? { paymentDate: scheduleType === "AFTER_DAY" ? null : body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null }
               : {}),
+            ...(scheduleType ? { scheduleType } : {}),
+            ...(scheduleType === "AFTER_DAY"
+              ? { scheduleAfterDay: Math.max(0, Math.min(27, Number(body.scheduleAfterDay ?? 10))), paymentDate: null }
+              : body.scheduleType === "FIXED"
+                ? { scheduleAfterDay: null }
+                : {}),
             ...(body.type !== undefined ? { type: body.type } : {}),
             ...(status !== undefined ? { status, paidAt: status === "PAID" ? new Date() : null } : {}),
           },

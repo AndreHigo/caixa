@@ -127,6 +127,8 @@ model Expense {
   amountCents Int
   dueDate     DateTime
   paymentDate DateTime?
+  scheduleType String       @default("FIXED")
+  scheduleAfterDay Int?
   status      String        @default("PENDING")
   paidAt      DateTime?
   type        String        @default("OTHER")

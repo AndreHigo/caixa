@@ -18,6 +18,9 @@ const dateInput = (value?: string | Date) =>
 const scheduleText = (row: any) => {
   if (row.kind === "income") return `entra em ${dateLabel(row.dueDate)}`;
   if (row.kind === "financing") return `crédito recebido em ${dateLabel(row.dueDate)}`;
+  if (row.scheduleType === "AFTER_DAY") {
+    return `planejado após dia ${String(row.scheduleAfterDay ?? 10).padStart(2, "0")}/${new Intl.DateTimeFormat("pt-BR", { month: "2-digit" }).format(new Date(row.dueDate))}`;
+  }
   const due = dateLabel(row.dueDate);
   const payment = dateLabel(row.paymentDate || row.dueDate);
   return due === payment ? `vence em ${due}` : `vence em ${due} · paga em ${payment}`;
@@ -87,6 +90,8 @@ export default function Transactions({
     amount: "",
     dueDate: dateInput(),
     paymentDate: "",
+    scheduleType: "FIXED",
+    scheduleAfterDay: "10",
     categoryId: "",
     type: "OTHER",
     recurrence: "NONE",
@@ -105,7 +110,7 @@ export default function Transactions({
   const clearForm = () => {
     setEditingId(null);
     setEditingRecurringId(null);
-    setMovement({ name: "", amount: "", dueDate: dateInput(), paymentDate: "", categoryId: "", type: "OTHER", recurrence: "NONE" });
+    setMovement({ name: "", amount: "", dueDate: dateInput(`${month}-01T12:00:00`), paymentDate: "", scheduleType: "FIXED", scheduleAfterDay: "10", categoryId: "", type: "OTHER", recurrence: "NONE" });
   };
 
   const editMovement = (row: any) => {
@@ -119,6 +124,8 @@ export default function Transactions({
         amount: String(recurring.amountCents / 100),
         dueDate: dateInput(recurring.firstDueDate),
         paymentDate: recurring.paymentDay ? `${month}-${String(recurring.paymentDay).padStart(2, "0")}` : "",
+        scheduleType: "FIXED",
+        scheduleAfterDay: "10",
         categoryId: recurring.categoryId || "",
         type: recurring.type || "OTHER",
         recurrence: "MONTHLY",
@@ -135,6 +142,8 @@ export default function Transactions({
       amount: String(expense.amountCents / 100),
       dueDate: dateInput(expense.dueDate),
       paymentDate: expense.paymentDate ? dateInput(expense.paymentDate) : "",
+      scheduleType: expense.scheduleType || "FIXED",
+      scheduleAfterDay: String(expense.scheduleAfterDay ?? 10),
       categoryId: expense.categoryId || "",
       type: expense.type || "OTHER",
       recurrence: "NONE",
@@ -231,10 +240,11 @@ export default function Transactions({
               <Field label="Tipo"><select value={movement.type} onChange={event => setMovement({ ...movement, type: event.target.value })}><option value="OTHER">Gasto</option><option value="INCOME">Valor a receber</option></select></Field>
               <Field label="Descrição"><input required value={movement.name} onChange={event => setMovement({ ...movement, name: event.target.value })} placeholder="Ex.: Aluguel" /></Field>
               <Field label="Valor"><input required type="number" min="0.01" step="0.01" value={movement.amount} onChange={event => setMovement({ ...movement, amount: event.target.value })} placeholder="0,00" /></Field>
-              <Field label="Vencimento"><input required type="date" value={movement.dueDate} onChange={event => setMovement({ ...movement, dueDate: event.target.value })} /></Field>
-              <Field label="Pagamento programado (opcional)"><input type="date" value={movement.paymentDate} onChange={event => setMovement({ ...movement, paymentDate: event.target.value })} /></Field>
+              <Field label="Planejamento"><select value={movement.scheduleType} onChange={event => setMovement({ ...movement, scheduleType: event.target.value, recurrence: event.target.value === "AFTER_DAY" ? "NONE" : movement.recurrence })}><option value="FIXED">Data definida</option><option value="AFTER_DAY">Compra futura · sem dia fixo</option></select></Field>
+              <Field label={movement.scheduleType === "AFTER_DAY" ? "Mês planejado" : "Vencimento"}><input required type={movement.scheduleType === "AFTER_DAY" ? "month" : "date"} value={movement.scheduleType === "AFTER_DAY" ? movement.dueDate.slice(0, 7) : movement.dueDate} onChange={event => setMovement({ ...movement, dueDate: movement.scheduleType === "AFTER_DAY" ? `${event.target.value}-01` : event.target.value })} /></Field>
+              {movement.scheduleType === "AFTER_DAY" ? <Field label="Comprar após o dia"><input required type="number" min="0" max="27" value={movement.scheduleAfterDay} onChange={event => setMovement({ ...movement, scheduleAfterDay: event.target.value })} /></Field> : <Field label="Pagamento programado (opcional)"><input type="date" value={movement.paymentDate} onChange={event => setMovement({ ...movement, paymentDate: event.target.value })} /></Field>}
               <Field label="Categoria"><select value={movement.categoryId} onChange={event => setMovement({ ...movement, categoryId: event.target.value })}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
-              <Field label="Repetição"><select value={movement.recurrence} disabled={Boolean(editingId || editingRecurringId)} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field>
+              <Field label="Repetição"><select value={movement.recurrence} disabled={Boolean(editingId || editingRecurringId) || movement.scheduleType === "AFTER_DAY"} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field>
             </div>
             <div className="form-actions"><button className="quick-add-button" type="submit">{editingId || editingRecurringId ? "Salvar alterações" : "Adicionar lançamento"}</button></div>
           </form>
