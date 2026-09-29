@@ -31,6 +31,7 @@ async function rebuildInvoices(cardId: string) {
   for (const [referenceMonth, installments] of grouped) {
     const dates = invoiceDates(card, referenceMonth);
     const totalCents = installments.reduce((sum, row) => sum + row.amountCents, 0);
+    const invoiceStatus = installments.every(row => row.status === "PAID") ? "PAID" : "OPEN";
     const invoice = await prisma.cardInvoice.upsert({
       where: { cardId_referenceMonth: { cardId, referenceMonth } },
       update: {
@@ -38,6 +39,8 @@ async function rebuildInvoices(cardId: string) {
         closingDate: dates.closingDate,
         dueDate: dates.dueDate,
         paymentDate: dates.paymentDate,
+        status: invoiceStatus,
+        paidAt: invoiceStatus === "PAID" ? new Date() : null,
       },
       create: {
         cardId,
@@ -46,6 +49,8 @@ async function rebuildInvoices(cardId: string) {
         closingDate: dates.closingDate,
         dueDate: dates.dueDate,
         paymentDate: dates.paymentDate,
+        status: invoiceStatus,
+        paidAt: invoiceStatus === "PAID" ? new Date() : null,
       },
     });
     await prisma.cardInstallment.updateMany({
