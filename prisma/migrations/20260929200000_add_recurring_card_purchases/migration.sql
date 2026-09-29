@@ -1,2 +1,0 @@
-ALTER TABLE "CardPurchase" ADD COLUMN "isRecurring" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "CardPurchase" ADD COLUMN "recurringActive" BOOLEAN NOT NULL DEFAULT true;

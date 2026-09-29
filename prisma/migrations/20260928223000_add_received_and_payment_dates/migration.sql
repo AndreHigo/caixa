@@ -1,3 +1,0 @@
-ALTER TABLE "Card" ADD COLUMN "paymentDay" INTEGER;
-ALTER TABLE "CardInvoice" ADD COLUMN "paymentDate" DATETIME;
-ALTER TABLE "Loan" ADD COLUMN "receivedDate" DATETIME;

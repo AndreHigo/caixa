@@ -1,2 +1,0 @@
-ALTER TABLE "Expense" ADD COLUMN "scheduleType" TEXT NOT NULL DEFAULT 'FIXED';
-ALTER TABLE "Expense" ADD COLUMN "scheduleAfterDay" INTEGER;

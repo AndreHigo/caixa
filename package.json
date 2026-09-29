@@ -8,6 +8,8 @@
     "start": "next start",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:import": "node prisma/import-postgres.mjs",
     "db:seed": "node prisma/seed.mjs"
   },
   "dependencies": {
