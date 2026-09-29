@@ -540,7 +540,7 @@ function LegacyDashboard({
               <div className="row-main">
                 <strong>{row.description}</strong>
                 <small>
-                  {row.category} · {row.kind === "income" || row.kind === "financing" ? "entra" : "vence"} em {dateLabel(row.dueDate)}
+                  {row.category} · {row.kind === "income" || row.kind === "financing" ? "entra" : row.kind === "card" ? "pagamento programado para" : "vence"} em {dateLabel(row.dueDate)}
                 </small>
               </div>
               <span className="row-value">{money(row.amountCents)}</span>
@@ -697,6 +697,7 @@ function Cards({
     limit: "",
     closingDay: "20",
     dueDay: "28",
+    paymentDay: "",
     color: "#8de0b8",
     description: "",
   });
@@ -731,7 +732,7 @@ function Cards({
 
   const resetCard = () => {
     setEditingCardId(null);
-    setCard({ name: "", brand: "Visa", limit: "", closingDay: "20", dueDay: "28", color: "#8de0b8", description: "" });
+    setCard({ name: "", brand: "Visa", limit: "", closingDay: "20", dueDay: "28", paymentDay: "", color: "#8de0b8", description: "" });
   };
 
   const editCard = (item: any) => {
@@ -742,6 +743,7 @@ function Cards({
       limit: String(item.limitCents / 100),
       closingDay: String(item.closingDay),
       dueDay: String(item.dueDay),
+      paymentDay: item.paymentDay ? String(item.paymentDay) : "",
       color: item.color,
       description: item.description || "",
     });
@@ -851,6 +853,7 @@ function Cards({
               <Field label="Limite total"><input type="number" min="0" step="0.01" value={card.limit} onChange={event => setCard({ ...card, limit: event.target.value })} placeholder="0,00" /></Field>
               <Field label="Dia de fechamento"><input required type="number" min="1" max="28" value={card.closingDay} onChange={event => setCard({ ...card, closingDay: event.target.value })} /></Field>
               <Field label="Dia de vencimento"><input required type="number" min="1" max="31" value={card.dueDay} onChange={event => setCard({ ...card, dueDay: event.target.value })} /></Field>
+              <Field label="Dia de pagamento programado"><input type="number" min="1" max="31" value={card.paymentDay} onChange={event => setCard({ ...card, paymentDay: event.target.value })} placeholder="Igual ao vencimento" /></Field>
               <Field label="Cor"><input type="color" value={card.color} onChange={event => setCard({ ...card, color: event.target.value })} /></Field>
               <Field label="Descrição" full><input value={card.description} onChange={event => setCard({ ...card, description: event.target.value })} placeholder="Opcional" /></Field>
             </div>
@@ -871,7 +874,7 @@ function Cards({
                 <Status value={item.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} />
               </div>
               <h3>{item.name}</h3>
-              <p>Fecha dia {item.closingDay} · vence dia {item.dueDay}</p>
+              <p>Fecha dia {item.closingDay} · vence dia {item.dueDay} · paga dia {item.paymentDay || item.dueDay}</p>
               <div className="account-limit"><span>Limite</span><strong>{money(item.limitCents)}</strong></div>
               <div className="account-card-metrics">
                 <span>Usado <strong>{money(item.usedCents)}</strong></span>
@@ -897,6 +900,7 @@ function Cards({
             <div className="detail-total">
               <span className="muted">Fatura de {monthName(month)}</span>
               <strong>{money(invoice?.totalCents || 0)}</strong>
+              <small className="muted">Vence {invoice ? dateLabel(invoice.dueDate) : "—"} · paga {invoice ? dateLabel(invoice.paymentDate || invoice.dueDate) : "—"}</small>
               <Status value={invoice?.status || "OPEN"} />
             </div>
           </div>
@@ -963,13 +967,14 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
     installment: "",
     dueDay: "10",
     startDate: dateInput(),
+    receivedDate: dateInput(),
     interestRate: "",
   });
 
   const reset = () => {
     setEditingId(null);
     setShowForm(false);
-    setForm({ name: "", principal: "", totalInstallments: "12", installment: "", dueDay: "10", startDate: dateInput(), interestRate: "" });
+    setForm({ name: "", principal: "", totalInstallments: "12", installment: "", dueDay: "10", startDate: dateInput(), receivedDate: dateInput(), interestRate: "" });
   };
 
   const edit = (loan: any) => {
@@ -982,6 +987,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
       installment: String(loan.installmentCents / 100),
       dueDay: String(loan.dueDay),
       startDate: dateInput(loan.startDate),
+      receivedDate: dateInput(loan.receivedDate || loan.startDate),
       interestRate: loan.interestRate ? String(loan.interestRate) : "",
     });
   };
@@ -1023,7 +1029,8 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
               <Field label="Número de parcelas"><input required type="number" min="1" value={form.totalInstallments} onChange={event => setForm({ ...form, totalInstallments: event.target.value })} /></Field>
               <Field label="Valor da parcela"><input required type="number" min="0.01" step="0.01" value={form.installment} onChange={event => setForm({ ...form, installment: event.target.value })} /></Field>
               <Field label="Dia de vencimento"><input required type="number" min="1" max="31" value={form.dueDay} onChange={event => setForm({ ...form, dueDay: event.target.value })} /></Field>
-              <Field label="Primeiro mês/data"><input required type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} /></Field>
+              <Field label="Data da primeira parcela"><input required type="date" value={form.startDate} onChange={event => setForm({ ...form, startDate: event.target.value })} /></Field>
+              <Field label="Data em que recebeu o dinheiro"><input required type="date" value={form.receivedDate} onChange={event => setForm({ ...form, receivedDate: event.target.value })} /></Field>
               <Field label="Juros (% opcional)"><input type="number" min="0" step="0.01" value={form.interestRate} onChange={event => setForm({ ...form, interestRate: event.target.value })} /></Field>
             </div>
             <div className="form-actions"><Button type="submit" kind="primary">{editingId ? "Salvar alterações" : "Salvar empréstimo"}</Button>{editingId && <Button onClick={reset}>Cancelar</Button>}</div>
@@ -1035,7 +1042,7 @@ function Loans({ data, run, request }: { data: any; run: RunFn; request: Request
             {data.loans.length ? data.loans.map((loan: any) => (
               <div className="row row-interactive" key={loan.id}>
                 <span className="row-dot" style={{ background: "#f6c177" }} />
-                <div className="row-main"><strong>{loan.name}</strong><small>{loan.paidInstallments}/{loan.totalInstallments} parcelas pagas · vence dia {loan.dueDay} · saldo contratado {money(Math.max(0, loan.principalCents - loan.paidInstallments * loan.installmentCents))}</small></div>
+                <div className="row-main"><strong>{loan.name}</strong><small>{loan.paidInstallments}/{loan.totalInstallments} parcelas pagas · recebido em {dateLabel(loan.receivedDate || loan.startDate)} · vence dia {loan.dueDay} · saldo contratado {money(Math.max(0, loan.principalCents - loan.paidInstallments * loan.installmentCents))}</small></div>
                 <span className="row-value">{money(loan.installmentCents)}</span>
                 <Status value={loan.status} />
                 <div className="row-actions">

@@ -240,7 +240,7 @@ export default function Transactions({
           {rows.length ? rows.map((row: any) => (
             <div className="row row-interactive transaction-row" key={row.id}>
               <span className="row-dot" style={{ background: row.color || "#82b4ff" }} />
-              <div className="row-main"><strong>{row.description}</strong><small>{row.category} · {row.recurring ? "fixo mensal · " : ""}{row.kind === "income" || row.kind === "financing" ? "entra" : "vence"} em {dateLabel(row.dueDate)}</small></div>
+              <div className="row-main"><strong>{row.description}</strong><small>{row.category} · {row.recurring ? "fixo mensal · " : ""}{row.kind === "income" || row.kind === "financing" ? "entra" : row.kind === "card" ? "pagamento programado para" : "vence"} em {dateLabel(row.dueDate)}</small></div>
               <span className={`row-value ${row.kind === "income" || row.kind === "financing" ? "positive-text" : ""}`}>{row.kind === "income" || row.kind === "financing" ? "+" : ""}{money(row.amountCents)}</span>
               <Status value={row.status} />
               <div className="row-actions">

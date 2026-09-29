@@ -37,6 +37,7 @@ async function rebuildInvoices(cardId: string) {
         totalCents,
         closingDate: dates.closingDate,
         dueDate: dates.dueDate,
+        paymentDate: dates.paymentDate,
       },
       create: {
         cardId,
@@ -44,6 +45,7 @@ async function rebuildInvoices(cardId: string) {
         totalCents,
         closingDate: dates.closingDate,
         dueDate: dates.dueDate,
+        paymentDate: dates.paymentDate,
       },
     });
     await prisma.cardInstallment.updateMany({
@@ -62,6 +64,7 @@ function loanRow(
     paidInstallments: number;
     dueDay: number;
     startDate: Date;
+    receivedDate: Date | null;
     status: string;
     lastPaidAt: Date | null;
   },
@@ -274,10 +277,16 @@ export async function GET(request: NextRequest) {
           ? "OVERDUE"
           : invoice.status;
 
-    const visibleInvoices = invoices.map(invoice => ({
-      ...invoice,
-      status: invoiceStatus(invoice),
-    }));
+    const visibleInvoices = invoices.map(invoice => {
+      const dates = invoiceDates(invoice.card, selectedMonth);
+      return {
+        ...invoice,
+        closingDate: dates.closingDate,
+        dueDate: dates.dueDate,
+        paymentDate: dates.paymentDate,
+        status: invoiceStatus({ ...invoice, dueDate: dates.dueDate }),
+      };
+    });
 
     const cardRows = visibleInvoices.map(invoice => ({
       id: `card-${invoice.id}`,
@@ -287,7 +296,9 @@ export async function GET(request: NextRequest) {
       description: invoice.card.name,
       category: "Fatura de cartão",
       amountCents: invoice.totalCents,
-      dueDate: invoice.dueDate,
+      dueDate: invoice.paymentDate || invoice.dueDate,
+      invoiceDueDate: invoice.dueDate,
+      paymentDate: invoice.paymentDate || invoice.dueDate,
       status: invoice.status,
       color: invoice.card.color,
       paidAt: invoice.paidAt,
@@ -322,7 +333,7 @@ export async function GET(request: NextRequest) {
     }));
 
     const financingRows = loans
-      .filter(loan => monthKey(new Date(loan.startDate)) === selectedMonth)
+      .filter(loan => monthKey(new Date(loan.receivedDate || loan.startDate)) === selectedMonth)
       .map(loan => ({
         id: `financing-${loan.id}`,
         kind: "financing" as const,
@@ -330,7 +341,7 @@ export async function GET(request: NextRequest) {
         description: `${loan.name} · valor recebido`,
         category: "Empréstimo recebido",
         amountCents: loan.principalCents,
-        dueDate: loan.startDate,
+        dueDate: loan.receivedDate || loan.startDate,
         status: "RECEIVED",
         color: "#f6c177",
       }));
@@ -501,6 +512,7 @@ export async function POST(request: NextRequest) {
             limitCents: toCents(body.limit),
             closingDay: Number(body.closingDay),
             dueDay: Number(body.dueDay),
+            paymentDay: body.paymentDay ? Number(body.paymentDay) : null,
             color: body.color || "#8de0b8",
             icon: body.icon || "card",
             description: body.description || null,
@@ -577,6 +589,7 @@ export async function POST(request: NextRequest) {
             installmentCents: toCents(body.installment),
             dueDay: Number(body.dueDay),
             startDate: new Date(`${body.startDate}T12:00:00`),
+            receivedDate: body.receivedDate ? new Date(`${body.receivedDate}T12:00:00`) : new Date(`${body.startDate}T12:00:00`),
             interestRate: body.interestRate ? Number(body.interestRate) : null,
             notes: body.notes || null,
           },
@@ -658,6 +671,7 @@ export async function PATCH(request: NextRequest) {
           limitCents: toCents(body.limit),
           closingDay: Number(body.closingDay),
           dueDay: Number(body.dueDay),
+          paymentDay: body.paymentDay ? Number(body.paymentDay) : null,
           color: body.color,
           description: body.description || null,
           status: body.status || "ACTIVE",
@@ -680,6 +694,11 @@ export async function PATCH(request: NextRequest) {
       if (body.dueDay !== undefined) data.dueDay = Number(body.dueDay);
       if (body.startDate !== undefined) {
         data.startDate = new Date(`${body.startDate}T12:00:00`);
+      }
+      if (body.receivedDate !== undefined) {
+        data.receivedDate = body.receivedDate
+          ? new Date(`${body.receivedDate}T12:00:00`)
+          : null;
       }
       if (body.interestRate !== undefined) {
         data.interestRate = body.interestRate ? Number(body.interestRate) : null;

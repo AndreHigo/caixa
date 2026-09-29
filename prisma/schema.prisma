@@ -28,6 +28,7 @@ model Card {
   limitCents  Int          @default(0)
   closingDay  Int
   dueDay      Int
+  paymentDay  Int?
   color       String       @default("#8de0b8")
   icon        String       @default("card")
   status      String       @default("ACTIVE")
@@ -75,6 +76,7 @@ model CardInvoice {
   referenceMonth String
   closingDate    DateTime
   dueDate        DateTime
+  paymentDate    DateTime?
   totalCents     Int               @default(0)
   status         String            @default("OPEN")
   paidAt         DateTime?
@@ -106,6 +108,7 @@ model Loan {
   installmentCents   Int
   dueDay             Int
   startDate          DateTime
+  receivedDate       DateTime?
   paidInstallments   Int      @default(0)
   interestRate       Float?
   status             String   @default("ACTIVE")
