@@ -707,16 +707,19 @@ function Cards({
     purchaseDate: dateInput(),
     total: "",
     installments: "1",
+    isRecurring: false,
     note: "",
   });
   const selected = data.cards.find((item: any) => item.id === selectedCardId) || data.cards[0];
+  const isSubscriptionCategory = (categoryId: string) =>
+    data.categories.find((category: any) => category.id === categoryId)?.name === "Assinaturas";
   const invoice = selected && data.invoices.find((item: any) => item.cardId === selected.id);
   const details = selected
     ? data.installments.filter((row: any) => row.purchase.cardId === selected.id)
     : [];
   const currentDetails = details.filter((row: any) => row.referenceMonth === month);
 
-  const preview = selected && purchase.total
+  const preview = selected && purchase.total && !purchase.isRecurring
     ? (() => {
         const date = new Date(`${purchase.purchaseDate}T12:00:00`);
         if (date.getDate() > selected.closingDay) date.setMonth(date.getMonth() + 1);
@@ -729,6 +732,9 @@ function Cards({
         }));
       })()
     : [];
+  const previewRows: any[] = preview.length > 6
+    ? [...preview.slice(0, 3), { collapsed: true }, ...preview.slice(-2)]
+    : preview;
 
   const resetCard = () => {
     setEditingCardId(null);
@@ -773,7 +779,7 @@ function Cards({
 
   const resetPurchase = () => {
     setEditingPurchaseId(null);
-    setPurchase({ description: "", categoryId: "", purchaseDate: dateInput(), total: "", installments: "1", note: "" });
+    setPurchase({ description: "", categoryId: "", purchaseDate: dateInput(), total: "", installments: "1", isRecurring: false, note: "" });
   };
 
   const editPurchase = (row: any) => {
@@ -785,6 +791,7 @@ function Cards({
       purchaseDate: dateInput(item.purchaseDate),
       total: String(item.totalCents / 100),
       installments: String(item.installments),
+      isRecurring: Boolean(item.isRecurring),
       note: item.note || "",
     });
     setShowPurchaseForm(true);
@@ -816,6 +823,14 @@ function Cards({
     run(
       () => request({ resource: "purchase", id: row.purchase.id }, "DELETE"),
       "Compra removida",
+    );
+  };
+
+  const toggleSubscription = (row: any) => {
+    const active = row.purchase.recurringActive !== false;
+    run(
+      () => request({ resource: "purchase", id: row.purchase.id, recurringActive: !active }, "PATCH"),
+      active ? "Assinatura cancelada" : "Assinatura reativada",
     );
   };
 
@@ -917,18 +932,19 @@ function Cards({
 
           {showPurchaseForm && (
             <form className="form action-panel" onSubmit={savePurchase}>
-              <div className="panel-header">
-                <div><h3>{editingPurchaseId ? "Editar compra" : "Nova compra no cartão"}</h3><small>As parcelas são distribuídas e a última recebe o ajuste de centavos.</small></div>
+                <div className="panel-header">
+                <div><h3>{editingPurchaseId ? "Editar compra" : "Nova compra no cartão"}</h3><small>{purchase.isRecurring ? "A assinatura entra uma vez por fatura até ser cancelada." : "As parcelas são distribuídas e a última recebe o ajuste de centavos."}</small></div>
               </div>
               <div className="form-grid">
-                <Field label="Descrição"><input required value={purchase.description} onChange={event => setPurchase({ ...purchase, description: event.target.value })} placeholder="Ex.: Mercado" /></Field>
-                <Field label="Categoria"><select value={purchase.categoryId} onChange={event => setPurchase({ ...purchase, categoryId: event.target.value })}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
+                <Field label="Descrição"><input required value={purchase.description} onChange={event => { const description = event.target.value; setPurchase({ ...purchase, description, isRecurring: purchase.isRecurring || /chatgpt|assinatura/i.test(description) }); }} placeholder="Ex.: Mercado" /></Field>
+                <Field label="Categoria"><select value={purchase.categoryId} onChange={event => { const categoryId = event.target.value; setPurchase({ ...purchase, categoryId, isRecurring: isSubscriptionCategory(categoryId) || purchase.isRecurring }); }}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
                 <Field label="Data da compra"><input required type="date" value={purchase.purchaseDate} onChange={event => setPurchase({ ...purchase, purchaseDate: event.target.value })} /></Field>
-                <Field label="Valor total"><input required type="number" min="0.01" step="0.01" value={purchase.total} onChange={event => setPurchase({ ...purchase, total: event.target.value })} placeholder="0,00" /></Field>
-                <Field label="Parcelas"><input required type="number" min="1" max="60" value={purchase.installments} onChange={event => setPurchase({ ...purchase, installments: event.target.value })} /></Field>
+                <Field label={purchase.isRecurring ? "Valor mensal" : "Valor total"}><input required type="number" min="0.01" step="0.01" value={purchase.total} onChange={event => setPurchase({ ...purchase, total: event.target.value })} placeholder="0,00" /></Field>
+                {!purchase.isRecurring && <Field label="Parcelas"><input required type="number" min="1" max="60" value={purchase.installments} onChange={event => setPurchase({ ...purchase, installments: event.target.value })} /></Field>}
                 <Field label="Observações"><input value={purchase.note} onChange={event => setPurchase({ ...purchase, note: event.target.value })} placeholder="Opcional" /></Field>
               </div>
-              {preview.length > 0 && <div className="preview"><strong>Prévia das parcelas</strong>{preview.map((item, index) => <div className="preview-row" key={`${item.month}-${index}`}><span>{item.month} · parcela {index + 1}/{preview.length}</span><strong>{money(item.amount)}</strong></div>)}</div>}
+              <label className="check-field"><input type="checkbox" checked={purchase.isRecurring} onChange={event => setPurchase({ ...purchase, isRecurring: event.target.checked, installments: event.target.checked ? "1" : purchase.installments })} /><span><strong>Assinatura recorrente</strong><small> Lança o valor mensal em todas as faturas futuras até você cancelar.</small></span></label>
+              {purchase.isRecurring ? <div className="preview subscription-preview"><div className="preview-heading"><strong>Assinatura mensal</strong><span>sem parcelas</span></div><div className="subscription-copy">{purchase.total ? `${money(Math.round(Number(purchase.total) * 100))} por fatura` : "Informe o valor mensal"} · continuará ativa até o botão “Cancelar assinatura” ser usado.</div></div> : preview.length > 0 && <div className="preview"><div className="preview-heading"><strong>Prévia das parcelas</strong><span>{preview.length} parcelas</span></div>{previewRows.map((item, index) => item.collapsed ? <div className="preview-more" key="collapsed">… {preview.length - 5} parcelas intermediárias ocultas …</div> : <div className="preview-row" key={`${item.month}-${index}`}><span>{item.month} · parcela {preview.indexOf(item) + 1}/{preview.length}</span><strong>{money(item.amount)}</strong></div>)}</div>}
               <div className="form-actions">
                 <Button type="submit" kind="primary">{editingPurchaseId ? "Salvar compra" : "Adicionar compra"}</Button>
                 <Button onClick={() => { resetPurchase(); setShowPurchaseForm(false); }}>Cancelar</Button>
@@ -944,10 +960,10 @@ function Cards({
             {currentDetails.length ? currentDetails.map((row: any) => (
               <div className="row row-interactive" key={row.id}>
                 <span className="row-dot" style={{ background: row.purchase.category?.color || selected.color }} />
-                <div className="row-main"><strong>{row.purchase.description}</strong><small>{row.purchase.category?.name || "Sem categoria"} · compra em {dateLabel(row.purchase.purchaseDate)} · parcela {row.number}/{row.purchase.installments}</small></div>
+                <div className="row-main"><strong>{row.purchase.description}</strong><small>{row.purchase.category?.name || "Sem categoria"} · compra em {dateLabel(row.purchase.purchaseDate)} · {row.purchase.isRecurring ? `assinatura mensal${row.purchase.recurringActive === false ? " · cancelada" : ""}` : `parcela ${row.number}/${row.purchase.installments}`}</small></div>
                 <span className="row-value">{money(row.amountCents)}</span>
                 <Status value={row.status} />
-                <div className="row-actions"><Button onClick={() => editPurchase(row)}>Editar</Button><Button kind="danger-button" onClick={() => removePurchase(row)}>Remover</Button></div>
+                <div className="row-actions"><Button onClick={() => editPurchase(row)}>Editar</Button>{row.purchase.isRecurring && <Button kind={row.purchase.recurringActive === false ? "primary" : "secondary"} onClick={() => toggleSubscription(row)}>{row.purchase.recurringActive === false ? "Reativar" : "Cancelar assinatura"}</Button>}<Button kind="danger-button" onClick={() => removePurchase(row)}>Remover</Button></div>
               </div>
             )) : <Empty>Nenhuma compra lançada neste cartão para este mês.</Empty>}
           </div>

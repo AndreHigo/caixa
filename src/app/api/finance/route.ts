@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sessionUser } from "@/lib/auth";
 import { addMonths, monthDate, monthKey, monthRange, toCents } from "@/lib/money";
-import { installmentsFor, invoiceDates } from "@/lib/finance";
+import { installmentsFor, invoiceDates, originMonth } from "@/lib/finance";
 
 async function userOrThrow() {
   const user = await sessionUser();
@@ -58,6 +58,46 @@ async function rebuildInvoices(cardId: string) {
       data: { invoiceId: invoice.id },
     });
   }
+}
+
+async function ensureRecurringCardPurchaseOccurrence(userId: string, referenceMonth: string) {
+  const purchases = await prisma.cardPurchase.findMany({
+    where: {
+      isRecurring: true,
+      recurringActive: true,
+      card: { userId },
+    },
+    include: { card: true },
+  });
+
+  const affectedCards = new Set<string>();
+  for (const purchase of purchases) {
+    const firstMonth = originMonth(new Date(purchase.purchaseDate), purchase.card.closingDay);
+    if (firstMonth > referenceMonth) continue;
+
+    const first = monthDate(firstMonth);
+    const target = monthDate(referenceMonth);
+    const number =
+      (target.getFullYear() - first.getFullYear()) * 12 +
+      target.getMonth() -
+      first.getMonth() +
+      1;
+
+    await prisma.cardInstallment.upsert({
+      where: { purchaseId_number: { purchaseId: purchase.id, number } },
+      update: { amountCents: purchase.totalCents, referenceMonth },
+      create: {
+        purchaseId: purchase.id,
+        number,
+        amountCents: purchase.totalCents,
+        referenceMonth,
+        status: "PENDING",
+      },
+    });
+    affectedCards.add(purchase.cardId);
+  }
+
+  await Promise.all([...affectedCards].map(cardId => rebuildInvoices(cardId)));
 }
 
 function loanRow(
@@ -214,6 +254,7 @@ export async function GET(request: NextRequest) {
     const start = monthDate(selectedMonth);
     const end = addMonths(start, 1);
     await ensureRecurringOccurrence(user.id, selectedMonth);
+    await ensureRecurringCardPurchaseOccurrence(user.id, selectedMonth);
 
     const [
       rawCards,
@@ -672,7 +713,8 @@ export async function POST(request: NextRequest) {
 
       const purchaseDate = new Date(`${body.purchaseDate}T12:00:00`);
       const totalCents = toCents(body.total);
-      const installments = Math.max(1, Number(body.installments));
+      const isRecurring = Boolean(body.isRecurring);
+      const installments = isRecurring ? 1 : Math.max(1, Number(body.installments));
       const purchase = await prisma.cardPurchase.create({
         data: {
           cardId: card.id,
@@ -681,6 +723,8 @@ export async function POST(request: NextRequest) {
           purchaseDate,
           totalCents,
           installments,
+          isRecurring,
+          recurringActive: true,
           note: body.note || null,
           rows: {
             create: installmentsFor(card, {
@@ -901,6 +945,25 @@ export async function PATCH(request: NextRequest) {
       });
       if (!current) throw new Error("Compra não encontrada");
 
+      if (body.recurringActive !== undefined && body.description === undefined) {
+        const recurringActive = Boolean(body.recurringActive);
+        const result = await prisma.cardPurchase.update({
+          where: { id: current.id },
+          data: { recurringActive },
+        });
+        if (!recurringActive) {
+          await prisma.cardInstallment.deleteMany({
+            where: {
+              purchaseId: current.id,
+              status: { not: "PAID" },
+              referenceMonth: { gt: monthKey(new Date()) },
+            },
+          });
+        }
+        await rebuildInvoices(current.cardId);
+        return NextResponse.json(result);
+      }
+
       const card = body.cardId
         ? await prisma.card.findFirst({ where: { id: body.cardId, userId: user.id } })
         : current.card;
@@ -908,7 +971,8 @@ export async function PATCH(request: NextRequest) {
 
       const purchaseDate = new Date(`${body.purchaseDate}T12:00:00`);
       const totalCents = toCents(body.total);
-      const installments = Math.max(1, Number(body.installments));
+      const isRecurring = body.isRecurring !== undefined ? Boolean(body.isRecurring) : current.isRecurring;
+      const installments = isRecurring ? 1 : Math.max(1, Number(body.installments));
       await prisma.$transaction(async tx => {
         await tx.cardInstallment.deleteMany({ where: { purchaseId: current.id } });
         await tx.cardPurchase.update({
@@ -920,6 +984,8 @@ export async function PATCH(request: NextRequest) {
             purchaseDate,
             totalCents,
             installments,
+            isRecurring,
+            recurringActive: body.recurringActive !== undefined ? Boolean(body.recurringActive) : current.recurringActive,
             note: body.note || null,
             rows: {
               create: installmentsFor(card, {

@@ -62,6 +62,8 @@ model CardPurchase {
   purchaseDate  DateTime
   totalCents    Int
   installments  Int
+  isRecurring   Boolean          @default(false)
+  recurringActive Boolean         @default(true)
   note          String?
   card          Card             @relation(fields: [cardId], references: [id], onDelete: Cascade)
   category      Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
