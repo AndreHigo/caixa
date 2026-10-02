@@ -4,6 +4,46 @@ import { sessionUser } from "@/lib/auth";
 import { addMonths, monthDate, monthKey, monthRange, toCents } from "@/lib/money";
 import { installmentsFor, invoiceDates, originMonth } from "@/lib/finance";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function assertSameOrigin(request: NextRequest) {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if ((origin && origin !== request.nextUrl.origin) || fetchSite === "cross-site") {
+    throw new Error("FORBIDDEN");
+  }
+}
+
+function text(value: unknown, field: string, max = 160) {
+  if (typeof value !== "string" || !value.trim() || value.length > max) {
+    throw new Error(`${field} inválido`);
+  }
+  return value.trim();
+}
+
+function positiveMoney(value: unknown, field: string, allowZero = false) {
+  const cents = toCents(value);
+  if (!Number.isFinite(cents) || (allowZero ? cents < 0 : cents <= 0)) {
+    throw new Error(`${field} inválido`);
+  }
+  return cents;
+}
+
+function day(value: unknown, field: string, optional = false) {
+  if (optional && (value === undefined || value === null || value === "")) return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 31) throw new Error(`${field} inválido`);
+  return number;
+}
+
+function dateValue(value: unknown, field: string) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${field} inválida`);
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) throw new Error(`${field} inválida`);
+  return date;
+}
+
 async function userOrThrow() {
   const user = await sessionUser();
   if (!user) throw new Error("UNAUTHORIZED");
@@ -32,6 +72,7 @@ async function rebuildInvoices(cardId: string) {
     const dates = invoiceDates(card, referenceMonth);
     const totalCents = installments.reduce((sum, row) => sum + row.amountCents, 0);
     const invoiceStatus = installments.every(row => row.status === "PAID") ? "PAID" : "OPEN";
+    const existing = await prisma.cardInvoice.findUnique({ where: { cardId_referenceMonth: { cardId, referenceMonth } } });
     const invoice = await prisma.cardInvoice.upsert({
       where: { cardId_referenceMonth: { cardId, referenceMonth } },
       update: {
@@ -40,7 +81,7 @@ async function rebuildInvoices(cardId: string) {
         dueDate: dates.dueDate,
         paymentDate: dates.paymentDate,
         status: invoiceStatus,
-        paidAt: invoiceStatus === "PAID" ? new Date() : null,
+        paidAt: invoiceStatus === "PAID" ? existing?.paidAt || new Date() : null,
       },
       create: {
         cardId,
@@ -83,18 +124,14 @@ async function ensureRecurringCardPurchaseOccurrence(userId: string, referenceMo
       first.getMonth() +
       1;
 
-    await prisma.cardInstallment.upsert({
-      where: { purchaseId_number: { purchaseId: purchase.id, number } },
-      update: { amountCents: purchase.totalCents, referenceMonth },
-      create: {
-        purchaseId: purchase.id,
-        number,
-        amountCents: purchase.totalCents,
-        referenceMonth,
-        status: "PENDING",
-      },
-    });
-    affectedCards.add(purchase.cardId);
+    const existing = await prisma.cardInstallment.findUnique({ where: { purchaseId_number: { purchaseId: purchase.id, number } } });
+    if (!existing) {
+      await prisma.cardInstallment.create({ data: { purchaseId: purchase.id, number, amountCents: purchase.totalCents, referenceMonth, status: "PENDING" } });
+      affectedCards.add(purchase.cardId);
+    } else if (existing.amountCents !== purchase.totalCents || existing.referenceMonth !== referenceMonth) {
+      await prisma.cardInstallment.update({ where: { id: existing.id }, data: { amountCents: purchase.totalCents, referenceMonth } });
+      affectedCards.add(purchase.cardId);
+    }
   }
 
   await Promise.all([...affectedCards].map(cardId => rebuildInvoices(cardId)));
@@ -206,11 +243,11 @@ async function ensureRecurringOccurrence(userId: string, referenceMonth: string)
           },
           update: {
             dueDate: recurringDueDate(new Date(item.firstDueDate), referenceMonth),
-            paymentDate: recurringPaymentDate(
-              item.paymentDay,
-              recurringDueDate(new Date(item.firstDueDate), referenceMonth),
-              referenceMonth,
-            ),
+              paymentDate: recurringPaymentDate(
+                item.paymentDay,
+                recurringDueDate(new Date(item.firstDueDate), referenceMonth),
+                referenceMonth,
+              ),
           },
           create: {
             recurringId: item.id,
@@ -253,6 +290,7 @@ export async function GET(request: NextRequest) {
     const range = monthRange(selectedMonth);
     const start = monthDate(selectedMonth);
     const end = addMonths(start, 1);
+    const forecastMonths = Array.from({ length: 6 }, (_, index) => monthKey(addMonths(start, index)));
     await ensureRecurringOccurrence(user.id, selectedMonth);
     await ensureRecurringCardPurchaseOccurrence(user.id, selectedMonth);
 
@@ -267,6 +305,8 @@ export async function GET(request: NextRequest) {
       recurringExpenses,
       recurringOccurrences,
       allCardInstallments,
+      forecastInstallments,
+      recurringCardPurchases,
     ] = await Promise.all([
       prisma.card.findMany({
         where: { userId: user.id },
@@ -330,6 +370,17 @@ export async function GET(request: NextRequest) {
           status: { not: "PAID" },
         },
         include: { purchase: { select: { cardId: true } } },
+      }),
+      prisma.cardInstallment.findMany({
+        where: {
+          referenceMonth: { in: forecastMonths },
+          purchase: { card: { userId: user.id } },
+        },
+        include: { purchase: { select: { id: true, cardId: true, isRecurring: true } } },
+      }),
+      prisma.cardPurchase.findMany({
+        where: { card: { userId: user.id }, isRecurring: true, recurringActive: true },
+        include: { card: true },
       }),
     ]);
 
@@ -534,6 +585,46 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const forecast = forecastMonths.map(referenceMonth => {
+      const monthExpenses = allExpenses.filter(expense => monthKey(new Date(expense.dueDate)) === referenceMonth);
+      const monthRecurring = recurringExpenses.filter(
+        expense => expense.status === "ACTIVE" && monthKey(new Date(expense.firstDueDate)) <= referenceMonth,
+      );
+      const monthLoans = loans.map(loan => loanRow(loan, referenceMonth)).filter(Boolean);
+      const monthInstallments = forecastInstallments.filter(row => row.referenceMonth === referenceMonth);
+      const existingRecurring = new Set(
+        monthInstallments.filter(row => row.purchase.isRecurring).map(row => row.purchaseId),
+      );
+      const recurringCardCents = recurringCardPurchases
+        .filter(purchase => originMonth(new Date(purchase.purchaseDate), purchase.card.closingDay) <= referenceMonth)
+        .filter(purchase => !existingRecurring.has(purchase.id))
+        .reduce((sum, purchase) => sum + purchase.totalCents, 0);
+      const cardCents = monthInstallments.reduce((sum, row) => sum + row.amountCents, 0) + recurringCardCents;
+      const oneTimeIncomeCents = monthExpenses.filter(expense => expense.type === "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
+      const oneTimeExpenseCents = monthExpenses.filter(expense => expense.type !== "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
+      const recurringIncomeCents = monthRecurring.filter(expense => expense.type === "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
+      const recurringExpenseCents = monthRecurring.filter(expense => expense.type !== "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
+      const incomeCents = oneTimeIncomeCents + recurringIncomeCents;
+      const restrictedIncomeCents = monthExpenses.filter(expense => expense.type === "INCOME" && /vale|aliment/i.test(expense.name)).reduce((sum, expense) => sum + expense.amountCents, 0) + monthRecurring.filter(expense => expense.type === "INCOME" && /vale|aliment/i.test(expense.name)).reduce((sum, expense) => sum + expense.amountCents, 0);
+      const financingCents = loans.filter(loan => monthKey(new Date(loan.receivedDate || loan.startDate)) === referenceMonth).reduce((sum, loan) => sum + loan.principalCents, 0);
+      const loanCents = monthLoans.reduce((sum, loan) => sum + (loan?.amountCents || 0), 0);
+      const commitmentsCents = oneTimeExpenseCents + recurringExpenseCents + loanCents + cardCents;
+      const cashIncomeCents = incomeCents - restrictedIncomeCents + financingCents;
+      return {
+        month: referenceMonth,
+        incomeCents,
+        financingCents,
+        restrictedIncomeCents,
+        cashIncomeCents,
+        commitmentsCents,
+        cardCents,
+        loanCents,
+        fixedCents: recurringExpenseCents + loanCents,
+        variableCents: oneTimeExpenseCents + cardCents,
+        availableCents: cashIncomeCents - commitmentsCents,
+      };
+    });
+
     const payableRows = rows.filter(
       row => row.kind !== "income" && row.kind !== "financing",
     );
@@ -572,6 +663,7 @@ export async function GET(request: NextRequest) {
       invoices: visibleInvoices,
       installments,
       timeline,
+      forecast,
       openingBalanceCents,
       categoryTotals: Object.fromEntries(categoryTotals),
       history,
@@ -592,66 +684,75 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao carregar dados";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Erro ao carregar dados" },
-      { status: 500 },
+      { error: message === "UNAUTHORIZED" ? "Sessão necessária" : message },
+      { status: message === "UNAUTHORIZED" ? 401 : message === "FORBIDDEN" ? 403 : 500 },
     );
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOrigin(request);
     const user = await userOrThrow();
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
 
     if (body.resource === "card") {
+      const name = text(body.name, "Nome do cartão");
+      const limitCents = positiveMoney(body.limit, "Limite", true);
+      const closingDay = day(body.closingDay, "Dia de fechamento") as number;
+      const dueDay = day(body.dueDay, "Dia de vencimento") as number;
       return NextResponse.json(
         await prisma.card.create({
           data: {
             userId: user.id,
-            name: body.name,
-            brand: body.brand || "Visa",
-            limitCents: toCents(body.limit),
-            closingDay: Number(body.closingDay),
-            dueDay: Number(body.dueDay),
-            paymentDay: body.paymentDay ? Number(body.paymentDay) : null,
-            color: body.color || "#8de0b8",
-            icon: body.icon || "card",
-            description: body.description || null,
+            name,
+            brand: typeof body.brand === "string" && body.brand.trim() ? body.brand.trim().slice(0, 30) : "Visa",
+            limitCents,
+            closingDay,
+            dueDay,
+            paymentDay: day(body.paymentDay, "Dia de pagamento", true),
+            color: typeof body.color === "string" && /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : "#8de0b8",
+            icon: typeof body.icon === "string" ? body.icon.slice(0, 30) : "card",
+            description: typeof body.description === "string" ? body.description.trim().slice(0, 240) || null : null,
           },
         }),
       );
     }
 
     if (body.resource === "category") {
+      const name = text(body.name, "Nome da categoria", 60);
       return NextResponse.json(
         await prisma.category.create({
           data: {
             userId: user.id,
-            name: body.name,
-            color: body.color || "#8de0b8",
-            icon: body.icon || "tag",
+            name,
+            color: typeof body.color === "string" && /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : "#8de0b8",
+            icon: typeof body.icon === "string" ? body.icon.slice(0, 30) : "tag",
           },
         }),
       );
     }
 
     if (body.resource === "expense") {
-      const status = body.status || "PENDING";
+      const name = text(body.name, "Descrição do lançamento");
+      const amountCents = positiveMoney(body.amount, "Valor");
+      const status = body.status === "PAID" ? "PAID" : "PENDING";
       if (body.recurrence === "MONTHLY") {
-        const firstDueDate = new Date(`${body.dueDate}T12:00:00`);
-        const paymentDate = body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null;
+        const firstDueDate = dateValue(body.dueDate, "Vencimento");
+        const paymentDate = body.paymentDate ? dateValue(body.paymentDate, "Pagamento") : null;
         const recurring = await prisma.recurringExpense.create({
           data: {
             userId: user.id,
-            name: body.name,
-            categoryId: body.categoryId || null,
-            amountCents: toCents(body.amount),
+            name,
+            categoryId: typeof body.categoryId === "string" && body.categoryId ? body.categoryId : null,
+            amountCents,
             firstDueDate,
             paymentDay: paymentDate ? paymentDate.getDate() : null,
             status: "ACTIVE",
-            type: body.type || "OTHER",
-            notes: body.notes || null,
+            type: body.type === "INCOME" ? "INCOME" : "OTHER",
+            notes: typeof body.notes === "string" ? body.notes.slice(0, 500) || null : null,
             occurrences: {
               create: {
                 referenceMonth: monthKey(firstDueDate),
@@ -668,8 +769,8 @@ export async function POST(request: NextRequest) {
       }
       const scheduleType = body.scheduleType === "AFTER_DAY" ? "AFTER_DAY" : "FIXED";
       const dueDate = scheduleType === "AFTER_DAY"
-        ? new Date(`${String(body.dueDate).slice(0, 7)}-01T12:00:00`)
-        : new Date(`${body.dueDate}T12:00:00`);
+        ? dateValue(`${String(body.dueDate).slice(0, 7)}-01`, "Mês")
+        : dateValue(body.dueDate, "Vencimento");
       const scheduleAfterDay = scheduleType === "AFTER_DAY"
         ? Math.max(0, Math.min(27, Number(body.scheduleAfterDay ?? 10)))
         : null;
@@ -677,63 +778,67 @@ export async function POST(request: NextRequest) {
         await prisma.expense.create({
           data: {
             userId: user.id,
-            name: body.name,
-            categoryId: body.categoryId || null,
-            amountCents: toCents(body.amount),
+            name,
+            categoryId: typeof body.categoryId === "string" && body.categoryId ? body.categoryId : null,
+            amountCents,
             dueDate,
-            paymentDate: scheduleType === "FIXED" && body.paymentDate ? new Date(`${body.paymentDate}T12:00:00`) : null,
+            paymentDate: scheduleType === "FIXED" && body.paymentDate ? dateValue(body.paymentDate, "Pagamento") : null,
             scheduleType,
             scheduleAfterDay,
             status,
             paidAt: status === "PAID" ? new Date() : null,
-            type: body.type || "OTHER",
-            notes: body.notes || null,
+            type: body.type === "INCOME" ? "INCOME" : "OTHER",
+            notes: typeof body.notes === "string" ? body.notes.slice(0, 500) || null : null,
           },
         }),
       );
     }
 
     if (body.resource === "loan") {
+      const name = text(body.name, "Nome do empréstimo");
       return NextResponse.json(
         await prisma.loan.create({
           data: {
             userId: user.id,
-            name: body.name,
-            principalCents: toCents(body.principal),
-            totalInstallments: Number(body.totalInstallments),
-            installmentCents: toCents(body.installment),
-            dueDay: Number(body.dueDay),
-            paymentDay: body.paymentDay ? Number(body.paymentDay) : null,
-            startDate: new Date(`${body.startDate}T12:00:00`),
-            receivedDate: body.receivedDate ? new Date(`${body.receivedDate}T12:00:00`) : new Date(`${body.startDate}T12:00:00`),
+            name,
+            principalCents: positiveMoney(body.principal, "Valor contratado"),
+            totalInstallments: Math.max(1, Math.min(600, Number(body.totalInstallments))),
+            installmentCents: positiveMoney(body.installment, "Valor da parcela"),
+            dueDay: day(body.dueDay, "Dia de vencimento") as number,
+            paymentDay: day(body.paymentDay, "Dia de pagamento", true),
+            startDate: dateValue(body.startDate, "Data da primeira parcela"),
+            receivedDate: body.receivedDate ? dateValue(body.receivedDate, "Data de recebimento") : dateValue(body.startDate, "Data de recebimento"),
             interestRate: body.interestRate ? Number(body.interestRate) : null,
-            notes: body.notes || null,
+            notes: typeof body.notes === "string" ? body.notes.slice(0, 500) || null : null,
           },
         }),
       );
     }
 
     if (body.resource === "purchase") {
+      const cardId = text(body.cardId, "Cartão", 100);
       const card = await prisma.card.findFirst({
-        where: { id: body.cardId, userId: user.id },
+        where: { id: cardId, userId: user.id },
       });
       if (!card) throw new Error("Cartão não encontrado");
 
-      const purchaseDate = new Date(`${body.purchaseDate}T12:00:00`);
-      const totalCents = toCents(body.total);
+      const description = text(body.description, "Descrição da compra");
+      const purchaseDate = dateValue(body.purchaseDate, "Data da compra");
+      const totalCents = positiveMoney(body.total, "Valor total");
+      const categoryId = typeof body.categoryId === "string" && body.categoryId ? body.categoryId : null;
       const isRecurring = Boolean(body.isRecurring);
       const installments = isRecurring ? 1 : Math.max(1, Number(body.installments));
       const purchase = await prisma.cardPurchase.create({
         data: {
           cardId: card.id,
-          categoryId: body.categoryId || null,
-          description: body.description,
+          categoryId,
+          description,
           purchaseDate,
           totalCents,
           installments,
           isRecurring,
           recurringActive: true,
-          note: body.note || null,
+          note: typeof body.note === "string" ? body.note.slice(0, 500) || null : null,
           rows: {
             create: installmentsFor(card, {
               purchaseDate,
@@ -749,8 +854,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.resource === "payInvoice") {
+      const invoiceId = text(body.invoiceId, "Fatura", 100);
       const invoice = await prisma.cardInvoice.findFirst({
-        where: { id: body.invoiceId, card: { userId: user.id } },
+        where: { id: invoiceId, card: { userId: user.id } },
       });
       if (!invoice) throw new Error("Fatura não encontrada");
       const paid = Boolean(body.paid);
@@ -769,17 +875,20 @@ export async function POST(request: NextRequest) {
 
     throw new Error("Recurso inválido");
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao salvar";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Erro ao salvar" },
-      { status: 400 },
+      { error: message === "UNAUTHORIZED" ? "Sessão necessária" : message },
+      { status: message === "UNAUTHORIZED" ? 401 : message === "FORBIDDEN" ? 403 : 400 },
     );
   }
 }
 
 export async function PATCH(request: NextRequest) {
   try {
+    assertSameOrigin(request);
     const user = await userOrThrow();
-    const body = await request.json();
+    const body = await request.json() as Record<string, any>;
+    if (typeof body.id !== "string" || !body.id) throw new Error("Identificador inválido");
 
     if (body.resource === "card") {
       const result = await prisma.card.updateMany({
@@ -934,13 +1043,14 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (body.resource === "category") {
+      const name = text(body.name, "Nome da categoria", 60);
       return NextResponse.json(
         await prisma.category.updateMany({
           where: { id: body.id, userId: user.id },
           data: {
-            name: body.name,
-            color: body.color,
-            icon: body.icon,
+            name,
+            color: typeof body.color === "string" && /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : "#8de0b8",
+            icon: typeof body.icon === "string" ? body.icon.slice(0, 30) : "tag",
           },
         }),
       );
@@ -1012,17 +1122,20 @@ export async function PATCH(request: NextRequest) {
 
     throw new Error("Recurso inválido");
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao atualizar";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Erro ao atualizar" },
-      { status: 400 },
+      { error: message === "UNAUTHORIZED" ? "Sessão necessária" : message },
+      { status: message === "UNAUTHORIZED" ? 401 : message === "FORBIDDEN" ? 403 : 400 },
     );
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
+    assertSameOrigin(request);
     const user = await userOrThrow();
-    const body = await request.json();
+    const body = await request.json() as Record<string, any>;
+    if (typeof body.id !== "string" || !body.id) throw new Error("Identificador inválido");
 
     if (body.resource === "card") {
       return NextResponse.json(
@@ -1079,9 +1192,10 @@ export async function DELETE(request: NextRequest) {
 
     throw new Error("Recurso inválido");
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Erro ao remover";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Erro ao remover" },
-      { status: 400 },
+      { error: message === "UNAUTHORIZED" ? "Sessão necessária" : message },
+      { status: message === "UNAUTHORIZED" ? 401 : message === "FORBIDDEN" ? 403 : 400 },
     );
   }
 }

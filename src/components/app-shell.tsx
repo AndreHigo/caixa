@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { useFinanceStore } from "@/stores/finance";
 import Dashboard from "@/components/dashboard";
+import Planning from "@/components/planning";
 import Transactions from "@/components/transactions";
 import "@/app/dashboard.css";
 
@@ -149,6 +150,8 @@ export default function AppShell() {
 
   const pageDescription = view === "dashboard"
     ? "Veja quanto entra, quanto sai e o que ainda falta pagar."
+    : view === "planning"
+      ? "Veja o saldo depois de cada conta e antecipe os meses apertados."
     : view === "transactions"
       ? "Cadastre contas, entradas e gastos; edite ou confirme cada um."
       : view === "cards"
@@ -158,6 +161,7 @@ export default function AppShell() {
           : "Use categorias para encontrar seus gastos mais rápido.";
 
   if (loading && !data) return <div className="loading-screen">Carregando seu caixa…</div>;
+  if (error === "Sessão necessária" || error === "UNAUTHORIZED") return <LoginScreen onSuccess={() => void refresh()} />;
   if (error && !data) {
     return (
       <div className="loading-screen">
@@ -181,6 +185,9 @@ export default function AppShell() {
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             Visão geral
           </button>
+          <button className={view === "planning" ? "active" : ""} onClick={() => setView("planning")}>
+            Planejamento
+          </button>
           <button className={view === "transactions" ? "active" : ""} onClick={() => setView("transactions")}>
             Lançamentos
           </button>
@@ -203,6 +210,8 @@ export default function AppShell() {
             <h1>
               {view === "dashboard"
                 ? "Visão geral"
+                : view === "planning"
+                  ? "Planejamento"
                 : view === "transactions"
                   ? "Lançamentos"
                 : view === "cards"
@@ -254,6 +263,7 @@ export default function AppShell() {
           <Dashboard
             data={data}
             month={month}
+            setMonth={setMonth}
             goCard={id => {
               setSelectedCard(id);
               setView("cards");
@@ -263,6 +273,7 @@ export default function AppShell() {
             request={request}
           />
         )}
+        {view === "planning" && <Planning data={data} month={month} setMonth={setMonth} run={run} request={request} />}
         {view === "transactions" && (
           <Transactions
             data={data}
@@ -291,6 +302,31 @@ export default function AppShell() {
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
+}
+
+function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Não foi possível entrar");
+      onSuccess();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível entrar");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <main className="login-page"><section className="login-card"><div className="brand"><div className="brand-mark">$</div><div><strong>Meu caixa</strong><small>finanças da casa</small></div></div><p className="eyebrow">ACESSO PROTEGIDO</p><h1>Bem-vindo de volta</h1><p className="muted">Entre para ver o seu planejamento financeiro.</p><form className="form" onSubmit={submit}><Field label="E-mail"><input required type="email" autoComplete="username" value={email} onChange={event => setEmail(event.target.value)} /></Field><Field label="Senha"><input required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} /></Field>{error && <div className="error">{error}</div>}<Button type="submit" kind="primary">{loading ? "Entrando…" : "Entrar"}</Button></form></section></main>;
 }
 
 function LegacyDashboard({
