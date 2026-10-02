@@ -142,11 +142,31 @@ export default function Transactions({
       amount: String(expense.amountCents / 100),
       dueDate: dateInput(expense.dueDate),
       paymentDate: expense.paymentDate ? dateInput(expense.paymentDate) : "",
-      scheduleType: expense.scheduleType || "FIXED",
+      scheduleType: "FIXED",
       scheduleAfterDay: String(expense.scheduleAfterDay ?? 10),
       categoryId: expense.categoryId || "",
       type: expense.type || "OTHER",
       recurrence: "NONE",
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const makeRecurring = (row: any) => {
+    const expense = data.expenses.find((item: any) => item.id === row.expenseId);
+    if (!expense) return;
+    setEditingId(expense.id);
+    setEditingRecurringId(null);
+    setMovement({
+      name: expense.name,
+      amount: String(expense.amountCents / 100),
+      dueDate: dateInput(expense.dueDate),
+      paymentDate: expense.paymentDate ? dateInput(expense.paymentDate) : "",
+      scheduleType: expense.scheduleType || "FIXED",
+      scheduleAfterDay: String(expense.scheduleAfterDay ?? 10),
+      categoryId: expense.categoryId || "",
+      type: expense.type || "OTHER",
+      recurrence: "MONTHLY",
     });
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -244,7 +264,7 @@ export default function Transactions({
               <Field label={movement.scheduleType === "AFTER_DAY" ? "Mês planejado" : "Vencimento"}><input required type={movement.scheduleType === "AFTER_DAY" ? "month" : "date"} value={movement.scheduleType === "AFTER_DAY" ? movement.dueDate.slice(0, 7) : movement.dueDate} onChange={event => setMovement({ ...movement, dueDate: movement.scheduleType === "AFTER_DAY" ? `${event.target.value}-01` : event.target.value })} /></Field>
               {movement.scheduleType === "AFTER_DAY" ? <Field label="Comprar após o dia"><input required type="number" min="0" max="27" value={movement.scheduleAfterDay} onChange={event => setMovement({ ...movement, scheduleAfterDay: event.target.value })} /></Field> : <Field label="Pagamento programado (opcional)"><input type="date" value={movement.paymentDate} onChange={event => setMovement({ ...movement, paymentDate: event.target.value })} /></Field>}
               <Field label="Categoria"><select value={movement.categoryId} onChange={event => setMovement({ ...movement, categoryId: event.target.value })}><option value="">Sem categoria</option>{data.categories.map((category: any) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
-              <Field label="Repetição"><select value={movement.recurrence} disabled={Boolean(editingId || editingRecurringId) || movement.scheduleType === "AFTER_DAY"} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field>
+              <Field label="Repetição"><select value={movement.recurrence} disabled={Boolean(editingRecurringId) || movement.scheduleType === "AFTER_DAY"} onChange={event => setMovement({ ...movement, recurrence: event.target.value })}><option value="NONE">Somente neste mês</option><option value="MONTHLY">Fixo todos os meses</option></select></Field>
             </div>
             <div className="form-actions"><button className="quick-add-button" type="submit">{editingId || editingRecurringId ? "Salvar alterações" : "Adicionar lançamento"}</button></div>
           </form>
@@ -267,7 +287,7 @@ export default function Transactions({
               <Status value={row.status} />
               <div className="row-actions">
                 {row.kind === "card" && <ActionButton onClick={() => goCard(row.cardId)}>Abrir cartão</ActionButton>}
-                {row.kind === "expense" || row.kind === "income" ? <><ActionButton onClick={() => editMovement(row)}>Editar</ActionButton><ActionButton onClick={() => toggleExpense(row)}>{row.status === "PAID" ? (row.kind === "income" ? "Reabrir entrada" : "Reabrir") : (row.kind === "income" ? "Confirmar entrada" : "Dar baixa")}</ActionButton><ActionButton danger onClick={() => removeExpense(row)}>Remover</ActionButton></> : null}
+                {row.kind === "expense" || row.kind === "income" ? <><ActionButton onClick={() => editMovement(row)}>Editar</ActionButton>{!row.recurring && <ActionButton onClick={() => makeRecurring(row)}>Tornar fixo</ActionButton>}<ActionButton onClick={() => toggleExpense(row)}>{row.status === "PAID" ? (row.kind === "income" ? "Reabrir entrada" : "Reabrir") : (row.kind === "income" ? "Confirmar entrada" : "Dar baixa")}</ActionButton><ActionButton danger onClick={() => removeExpense(row)}>Remover</ActionButton></> : null}
                 {row.kind === "loan" && <ActionButton onClick={() => toggleLoan(row)}>{row.status === "PAID" ? "Desfazer baixa" : "Dar baixa"}</ActionButton>}
                 {row.kind === "financing" && <span className="action-note">Entrada do crédito</span>}
               </div>

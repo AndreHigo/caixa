@@ -26,6 +26,7 @@ export function MonthOutlook({ data, month, setMonth }: { data: any; month: stri
               <span className="outlook-month-name">{monthName(plan.month).replace(" de ", " ")}</span>
               <strong>{negative ? "Falta " : "Livre "}{money(Math.abs(plan.availableCents))}</strong>
               <span>{money(plan.commitmentsCents)} em compromissos</span>
+              <small>fixos {money(plan.fixedCents)} · variáveis {money(plan.variableCents)}</small>
               {plan.financingCents > 0 && <small>inclui {money(plan.financingCents)} de crédito</small>}
             </button>
           );
@@ -50,6 +51,8 @@ function DecisionCard({ data, plan }: { data: any; plan: any }) {
       <div className="decision-breakdown">
         <div><span>Entradas em dinheiro</span><strong>{money(plan?.cashIncomeCents ?? data.totals.cashIncomeCents)}</strong></div>
         <div><span>Compromissos previstos</span><strong>{money(plan?.commitmentsCents ?? data.totals.totalCents)}</strong></div>
+        <div><span>Contas fixas + parcelas</span><strong>{money(plan?.fixedCents ?? 0)}</strong></div>
+        <div><span>Gastos variáveis/cartão</span><strong>{money(plan?.variableCents ?? 0)}</strong></div>
         <div className={withoutCredit < 0 ? "warning-line" : ""}><span>Sem empréstimo/ crédito</span><strong>{withoutCredit < 0 ? "−" : ""}{money(Math.abs(withoutCredit))}</strong></div>
         <small>{plan?.financingCents ? `O resultado melhora com ${money(plan.financingCents)} de crédito recebido neste mês.` : "Não há crédito extraordinário considerado neste mês."}</small>
       </div>
@@ -96,6 +99,7 @@ export default function Planning({ data, month, setMonth, run, request }: { data
           </div>
         </article>
         <aside className="planning-side">
+          <article className="panel rule-panel"><p className="eyebrow">BASE DA PROJEÇÃO</p><h3>O que vai repetir</h3><p>O próximo mês só carrega itens marcados como fixos. Se uma conta não estiver nesta lista, ela não entra automaticamente na previsão.</p><div className="fixed-list">{(data.recurringExpenses || []).filter((item: any) => item.status === "ACTIVE").map((item: any) => <div className="fixed-list-row" key={item.id}><span>{item.name}</span><strong>{money(item.amountCents)}</strong></div>)}</div></article>
           <article className="panel rule-panel"><p className="eyebrow">COMO LER</p><h3>O que esse número significa?</h3><p>“Livre” é o que sobra depois dos lançamentos cadastrados. Ele ainda não reserva alimentação, combustível ou imprevistos automaticamente.</p><p>O valor de um empréstimo aparece como entrada somente no mês em que você recebeu. A parcela continua pesando nos meses seguintes.</p></article>
           <article className="panel rule-panel"><p className="eyebrow">CHECKLIST</p><h3>Antes de gastar</h3><ul><li>Confira o mês atual e o próximo.</li><li>Reserve primeiro o básico da casa.</li><li>Não trate limite do cartão como renda.</li><li>Baixe uma conta somente quando pagar.</li></ul></article>
         </aside>

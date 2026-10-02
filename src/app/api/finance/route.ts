@@ -595,11 +595,15 @@ export async function GET(request: NextRequest) {
       const existingRecurring = new Set(
         monthInstallments.filter(row => row.purchase.isRecurring).map(row => row.purchaseId),
       );
-      const recurringCardCents = recurringCardPurchases
+      const existingRecurringCardCents = monthInstallments
+        .filter(row => row.purchase.isRecurring)
+        .reduce((sum, row) => sum + row.amountCents, 0);
+      const missingRecurringCardCents = recurringCardPurchases
         .filter(purchase => originMonth(new Date(purchase.purchaseDate), purchase.card.closingDay) <= referenceMonth)
         .filter(purchase => !existingRecurring.has(purchase.id))
         .reduce((sum, purchase) => sum + purchase.totalCents, 0);
-      const cardCents = monthInstallments.reduce((sum, row) => sum + row.amountCents, 0) + recurringCardCents;
+      const recurringCardCents = existingRecurringCardCents + missingRecurringCardCents;
+      const cardCents = monthInstallments.reduce((sum, row) => sum + row.amountCents, 0) + missingRecurringCardCents;
       const oneTimeIncomeCents = monthExpenses.filter(expense => expense.type === "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
       const oneTimeExpenseCents = monthExpenses.filter(expense => expense.type !== "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
       const recurringIncomeCents = monthRecurring.filter(expense => expense.type === "INCOME").reduce((sum, expense) => sum + expense.amountCents, 0);
@@ -619,8 +623,8 @@ export async function GET(request: NextRequest) {
         commitmentsCents,
         cardCents,
         loanCents,
-        fixedCents: recurringExpenseCents + loanCents,
-        variableCents: oneTimeExpenseCents + cardCents,
+        fixedCents: recurringExpenseCents + loanCents + recurringCardCents,
+        variableCents: oneTimeExpenseCents + cardCents - recurringCardCents,
         availableCents: cashIncomeCents - commitmentsCents,
       };
     });
@@ -947,6 +951,50 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (body.resource === "expense") {
+      const existing = await prisma.expense.findFirst({
+        where: { id: body.id, userId: user.id },
+      });
+      if (!existing) throw new Error("Lançamento não encontrado");
+
+      // Permite converter uma conta avulsa (por exemplo, a energia deste mês)
+      // em uma conta fixa sem obrigar o usuário a recriá-la e correr o risco
+      // de duplicar o mês atual.
+      if (body.recurrence === "MONTHLY") {
+        const firstDueDate = body.dueDate !== undefined
+          ? dateValue(body.dueDate, "Vencimento")
+          : existing.dueDate;
+        const paymentDate = body.paymentDate !== undefined
+          ? (body.paymentDate ? dateValue(body.paymentDate, "Pagamento") : null)
+          : existing.paymentDate;
+        const recurring = await prisma.$transaction(async transaction => {
+          const created = await transaction.recurringExpense.create({
+            data: {
+              userId: user.id,
+              name: body.name !== undefined ? text(body.name, "Descrição do lançamento") : existing.name,
+              categoryId: body.categoryId !== undefined ? (body.categoryId || null) : existing.categoryId,
+              amountCents: body.amount !== undefined ? positiveMoney(body.amount, "Valor") : existing.amountCents,
+              firstDueDate,
+              paymentDay: paymentDate ? paymentDate.getDate() : null,
+              status: "ACTIVE",
+              type: body.type === "INCOME" || (body.type === undefined && existing.type === "INCOME") ? "INCOME" : "OTHER",
+              notes: existing.notes,
+              occurrences: {
+                create: {
+                  referenceMonth: monthKey(firstDueDate),
+                  dueDate: firstDueDate,
+                  paymentDate: paymentDate || firstDueDate,
+                  status: body.status || existing.status,
+                  paidAt: (body.status || existing.status) === "PAID" ? existing.paidAt || new Date() : null,
+                },
+              },
+            },
+          });
+          await transaction.expense.delete({ where: { id: existing.id } });
+          return created;
+        });
+        return NextResponse.json(recurring);
+      }
+
       const status = body.status;
       const scheduleType = body.scheduleType === "AFTER_DAY" ? "AFTER_DAY" : body.scheduleType === "FIXED" ? "FIXED" : undefined;
       const dueDate = body.dueDate !== undefined
