@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
   Bar,
@@ -18,6 +18,7 @@ import { useFinanceStore } from "@/stores/finance";
 import Dashboard from "@/components/dashboard";
 import Planning from "@/components/planning";
 import Transactions from "@/components/transactions";
+import Banks from "@/components/banks";
 import "@/app/dashboard.css";
 
 const money = (cents = 0) =>
@@ -129,6 +130,13 @@ export default function AppShell() {
   } = useFinanceStore();
   const [toast, setToast] = useState("");
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
+  const navigation = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const nav = navigation.current;
+    const active = nav?.querySelector<HTMLButtonElement>("button.active");
+    if (nav && active && nav.scrollWidth > nav.clientWidth) nav.scrollTo({ left: Math.max(0, active.offsetLeft - nav.offsetLeft - 8), behavior: "auto" });
+  }, [view]);
 
   useEffect(() => {
     void refresh();
@@ -158,6 +166,8 @@ export default function AppShell() {
         ? "Acompanhe a fatura e veja as compras que formam o total."
       : view === "loans"
           ? "Controle as parcelas e o que ainda falta pagar."
+          : view === "banks"
+            ? "Consulte seu banco e confira os movimentos antes de colocá-los no orçamento."
           : "Use categorias para encontrar seus gastos mais rápido.";
 
   if (loading && !data) return <div className="loading-screen">Carregando seu caixa…</div>;
@@ -181,7 +191,7 @@ export default function AppShell() {
             <small>finanças da casa</small>
           </div>
         </div>
-        <nav className="nav">
+        <nav className="nav" ref={navigation} aria-label="Telas do Meu Caixa">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
             Visão geral
           </button>
@@ -199,6 +209,9 @@ export default function AppShell() {
           </button>
           <button className={view === "categories" ? "active" : ""} onClick={() => setView("categories")}>
             Categorias
+          </button>
+          <button className={view === "banks" ? "active" : ""} onClick={() => setView("banks")}>
+            Bancos
           </button>
         </nav>
       </aside>
@@ -218,6 +231,8 @@ export default function AppShell() {
                   ? "Cartões de crédito"
                   : view === "loans"
                     ? "Empréstimos externos"
+                    : view === "banks"
+                      ? "Bancos e extrato"
                     : "Categorias"}
             </h1>
             <p>{pageDescription}</p>
@@ -269,6 +284,7 @@ export default function AppShell() {
               setView("cards");
             }}
             goTransactions={() => setView("transactions")}
+            goBanks={() => setView("banks")}
             run={run}
             request={request}
           />
@@ -298,6 +314,7 @@ export default function AppShell() {
         )}
         {view === "loans" && <Loans data={data} run={run} request={request} />}
         {view === "categories" && <Categories data={data} run={run} request={request} />}
+        {view === "banks" && <Banks month={month} finance={data} refresh={refresh} />}
       </main>
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -996,7 +1013,7 @@ function Cards({
             {currentDetails.length ? currentDetails.map((row: any) => (
               <div className="row row-interactive" key={row.id}>
                 <span className="row-dot" style={{ background: row.purchase.category?.color || selected.color }} />
-                <div className="row-main"><strong>{row.purchase.description}</strong><small>{row.purchase.category?.name || "Sem categoria"} · compra em {dateLabel(row.purchase.purchaseDate)} · {row.purchase.isRecurring ? `assinatura mensal${row.purchase.recurringActive === false ? " · cancelada" : ""}` : `parcela ${row.number}/${row.purchase.installments}`}</small></div>
+                <div className="row-main"><strong>{row.purchase.description}</strong><small>{row.purchase.category?.name || "Sem categoria"} · compra em {dateLabel(row.purchase.purchaseDate)} · {row.purchase.isRecurring ? `assinatura mensal${row.purchase.recurringActive === false ? " · cancelada" : ""}` : row.bankSource ? `importada do banco${row.bankSource.installmentNumber ? ` · parcela ${row.bankSource.installmentNumber}/${row.bankSource.totalInstallments || "?"}` : ""}` : `parcela ${row.number}/${row.purchase.installments}`}</small></div>
                 <span className="row-value">{money(row.amountCents)}</span>
                 <Status value={row.status} />
                 <div className="row-actions"><Button onClick={() => editPurchase(row)}>Editar</Button>{row.purchase.isRecurring && <Button kind={row.purchase.recurringActive === false ? "primary" : "secondary"} onClick={() => toggleSubscription(row)}>{row.purchase.recurringActive === false ? "Reativar" : "Cancelar assinatura"}</Button>}<Button kind="danger-button" onClick={() => removePurchase(row)}>Remover</Button></div>

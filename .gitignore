@@ -2,8 +2,14 @@ node_modules/
 .next/
 .next-stale-*/
 .env
+.env.*
+!.env.example
+!.env.production.example
 prisma/dev.db
 prisma/dev.db-journal
 prisma/legacy-export.json
 prisma/migrations-sqlite-legacy/
 prisma/migrate-fixed.mjs
+tsconfig.tsbuildinfo
+.qa-bank-fixture.json
+qa-artifacts/

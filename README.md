@@ -8,10 +8,14 @@ Aplicação de controle financeiro com Next.js, Prisma e PostgreSQL.
 npm install
 npm run db:generate
 npx prisma migrate deploy
-npm run dev -- -p 4173
+npm run dev -- --hostname 127.0.0.1 --port 4173
 ```
 
 Abra [http://127.0.0.1:4173](http://127.0.0.1:4173).
+
+## Publicar em VPS com Docker
+
+O app e o PostgreSQL podem rodar no mesmo Compose. Siga o [guia de implantação Docker](docs/DEPLOY-DOCKER.md). O PostgreSQL não fica exposto na internet; o app fica ligado ao proxy HTTPS da VPS.
 
 ## Estrutura
 
@@ -28,6 +32,14 @@ Abra [http://127.0.0.1:4173](http://127.0.0.1:4173).
 Na tela **Lançamentos**, use `+ Novo lançamento` e escolha `Fixo todos os meses` em **Repetição**. A conta ou entrada será criada para os meses seguintes, mas cada mês terá sua própria confirmação de pagamento/recebimento.
 
 Use `Somente neste mês` para gastos avulsos. Cartões e empréstimos continuam com seus próprios cálculos de parcelas.
+
+## Conectar conta bancária
+
+Abra **Bancos** para conectar por Open Finance e conferir extrato, saldo e faturas. Requer chaves da Pluggy no servidor e consentimento do usuário no banco; sem configuração, a tela informa a pendência e não mostra saldo fictício.
+
+Movimentos importados não entram diretamente no orçamento: vincule a uma conta já cadastrada, adicione um lançamento novo ou ignore transferências/estornos. Compras do cartão entram somente no total da fatura nos gastos gerais.
+
+Veja o [guia de configuração, segurança e limites](docs/INTEGRACAO-BANCARIA.md) e o [inventário de testes](docs/QA-BANCOS.md). Execute `npm run test:banks` para os testes sem conta bancária real.
 
 ## Comandos úteis
 

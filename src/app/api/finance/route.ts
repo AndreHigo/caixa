@@ -3,14 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { sessionUser } from "@/lib/auth";
 import { addMonths, monthDate, monthKey, monthRange, toCents } from "@/lib/money";
 import { installmentsFor, invoiceDates, originMonth } from "@/lib/finance";
+import { rebuildInvoices } from "@/lib/invoices";
+import { sameOrigin } from "@/lib/origin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 function assertSameOrigin(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  const fetchSite = request.headers.get("sec-fetch-site");
-  if ((origin && origin !== request.nextUrl.origin) || fetchSite === "cross-site") {
+  if (!sameOrigin(request.headers, request.nextUrl.origin)) {
     throw new Error("FORBIDDEN");
   }
 }
@@ -50,56 +50,6 @@ async function userOrThrow() {
   return user;
 }
 
-async function rebuildInvoices(cardId: string) {
-  const card = await prisma.card.findUnique({ where: { id: cardId } });
-  if (!card) return;
-
-  const rows = await prisma.cardInstallment.findMany({ where: { purchase: { cardId } } });
-  const grouped = new Map<string, typeof rows>();
-  for (const row of rows) {
-    grouped.set(row.referenceMonth, [...(grouped.get(row.referenceMonth) || []), row]);
-  }
-
-  const months = [...grouped.keys()];
-  await prisma.cardInvoice.deleteMany({
-    where: {
-      cardId,
-      ...(months.length ? { referenceMonth: { notIn: months } } : {}),
-    },
-  });
-
-  for (const [referenceMonth, installments] of grouped) {
-    const dates = invoiceDates(card, referenceMonth);
-    const totalCents = installments.reduce((sum, row) => sum + row.amountCents, 0);
-    const invoiceStatus = installments.every(row => row.status === "PAID") ? "PAID" : "OPEN";
-    const existing = await prisma.cardInvoice.findUnique({ where: { cardId_referenceMonth: { cardId, referenceMonth } } });
-    const invoice = await prisma.cardInvoice.upsert({
-      where: { cardId_referenceMonth: { cardId, referenceMonth } },
-      update: {
-        totalCents,
-        closingDate: dates.closingDate,
-        dueDate: dates.dueDate,
-        paymentDate: dates.paymentDate,
-        status: invoiceStatus,
-        paidAt: invoiceStatus === "PAID" ? existing?.paidAt || new Date() : null,
-      },
-      create: {
-        cardId,
-        referenceMonth,
-        totalCents,
-        closingDate: dates.closingDate,
-        dueDate: dates.dueDate,
-        paymentDate: dates.paymentDate,
-        status: invoiceStatus,
-        paidAt: invoiceStatus === "PAID" ? new Date() : null,
-      },
-    });
-    await prisma.cardInstallment.updateMany({
-      where: { id: { in: installments.map(row => row.id) } },
-      data: { invoiceId: invoice.id },
-    });
-  }
-}
 
 async function ensureRecurringCardPurchaseOccurrence(userId: string, referenceMonth: string) {
   const purchases = await prisma.cardPurchase.findMany({
@@ -655,8 +605,15 @@ export async function GET(request: NextRequest) {
       .filter(row => row.status === "OVERDUE")
       .reduce((sum, row) => sum + row.amountCents, 0);
 
+    const [bankAccounts, bankPendingCount, bankPurchaseSources] = await Promise.all([
+      prisma.bankAccount.findMany({ where: { connection: { userId: user.id, enabled: true, sandbox: false }, active: true, type: "BANK", currency: "BRL", balanceCents: { not: null } }, select: { balanceCents: true, connection: { select: { providerUpdatedAt: true } } } }),
+      prisma.bankTransaction.count({ where: { userId: user.id, reviewStatus: { in: ["NEW", "CHANGED"] }, account: { connection: { sandbox: false } } } }),
+      prisma.bankTransaction.findMany({ where: { userId: user.id, linkedKind: "installment", linkedId: { in: installments.map(row => row.id) } }, select: { linkedId: true, installmentNumber: true, totalInstallments: true } }),
+    ]);
+    const bankDates = bankAccounts.map(row => row.connection.providerUpdatedAt).filter((date): date is Date => Boolean(date));
     return NextResponse.json({
       selectedMonth,
+      bankSummary: { cashBalanceCents: bankAccounts.length ? bankAccounts.reduce((sum, row) => sum + (row.balanceCents || 0), 0) : null, pendingCount: bankPendingCount, updatedAt: bankDates.length ? new Date(Math.min(...bankDates.map(date => date.getTime()))) : null },
       cards,
       loans,
       expenses,
@@ -665,7 +622,7 @@ export async function GET(request: NextRequest) {
       categories,
       rows,
       invoices: visibleInvoices,
-      installments,
+      installments: installments.map(row => ({ ...row, bankSource: bankPurchaseSources.find(source => source.linkedId === row.id) || null })),
       timeline,
       forecast,
       openingBalanceCents,

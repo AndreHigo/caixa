@@ -5,11 +5,13 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:cry
 import { prisma } from "./prisma";
 
 const COOKIE = "meu-caixa-session";
-const configuredSecret = process.env.JWT_SECRET;
-if (process.env.NODE_ENV === "production" && !configuredSecret) {
-  throw new Error("JWT_SECRET precisa estar configurado em produção");
+function sessionSecret() {
+  const configuredSecret = process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === "production" && !configuredSecret) {
+    throw new Error("JWT_SECRET precisa estar configurado em produção");
+  }
+  return new TextEncoder().encode(configuredSecret || "local-development-secret");
 }
-const secret = new TextEncoder().encode(configuredSecret || "local-development-secret");
 const scrypt = promisify(scryptCallback);
 const secureCookie = process.env.SESSION_COOKIE_SECURE
   ? process.env.SESSION_COOKIE_SECURE === "true"
@@ -31,17 +33,18 @@ export async function verifyPassword(password: string, stored: string) {
 }
 
 export async function createSession(userId: string) {
-  const token = await new SignJWT({ userId }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(secret);
-  cookies().set(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: secureCookie, maxAge: 60 * 60 * 24 * 7, path: "/" });
+  const token = await new SignJWT({ userId }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(sessionSecret());
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: secureCookie, maxAge: 60 * 60 * 24 * 7, path: "/" });
 }
 
-export function clearSession() { cookies().delete(COOKIE); }
+export async function clearSession() { (await cookies()).delete(COOKIE); }
 
 export async function sessionUser() {
-  const token = cookies().get(COOKIE)?.value;
+  const token = (await cookies()).get(COOKIE)?.value;
   if (token) {
     try {
-      const { payload } = await jwtVerify(token, secret);
+      const { payload } = await jwtVerify(token, sessionSecret());
       if (typeof payload.userId === "string") return prisma.user.findUnique({ where: { id: payload.userId } });
     } catch { /* token expired or invalid */ }
   }

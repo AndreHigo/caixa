@@ -1,0 +1,12 @@
+node_modules
+.next
+.next-*
+.git
+.env
+.env.*
+!.env.production.example
+qa-artifacts
+prisma/legacy-export.json
+prisma/dev.db
+prisma/dev.db-journal
+tsconfig.tsbuildinfo

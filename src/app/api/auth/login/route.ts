@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSession, hashPassword, verifyPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { sameOrigin } from "@/lib/origin";
 
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin");
-  if (origin && origin !== request.nextUrl.origin) {
+  if (!sameOrigin(request.headers, request.nextUrl.origin)) {
     return NextResponse.json({ error: "Origem não autorizada" }, { status: 403 });
   }
 

@@ -17,6 +17,8 @@ model User {
   expenses   Expense[]
   recurringExpenses RecurringExpense[]
   categories Category[]
+  bankConnections BankConnection[]
+  bankTransactions BankTransaction[]
   createdAt  DateTime   @default(now())
 }
 
@@ -171,4 +173,91 @@ model RecurringExpenseOccurrence {
   recurring    RecurringExpense @relation(fields: [recurringId], references: [id], onDelete: Cascade)
   @@unique([recurringId, referenceMonth])
   @@index([referenceMonth, status])
+}
+
+model BankConnection {
+  id               String @id @default(cuid())
+  userId           String
+  itemId           String @unique
+  connectorId      Int
+  institution      String
+  status           String @default("UPDATING")
+  sandbox          Boolean @default(false)
+  enabled          Boolean @default(true)
+  lastSyncedAt     DateTime?
+  providerUpdatedAt DateTime?
+  consentExpiresAt DateTime?
+  syncStartedAt    DateTime?
+  refreshRequestedAt DateTime?
+  syncError        String?
+  createdAt        DateTime @default(now())
+  user             User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts         BankAccount[]
+  @@unique([userId, connectorId])
+}
+
+model BankAccount {
+  id             String @id @default(cuid())
+  connectionId   String
+  externalId     String @unique
+  name           String
+  type           String
+  subtype        String
+  currency       String @default("BRL")
+  numberLast4    String?
+  balanceCents   Int?
+  limitCents     Int?
+  availableLimitCents Int?
+  closingDate    DateTime?
+  dueDate        DateTime?
+  lastSyncedAt   DateTime?
+  active         Boolean @default(true)
+  connection     BankConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  transactions   BankTransaction[]
+  bills          BankBill[]
+  @@index([connectionId, active])
+}
+
+model BankTransaction {
+  id             String @id @default(cuid())
+  userId         String
+  accountId      String
+  externalId     String
+  stableKey      String
+  description    String
+  date           DateTime
+  amountCents    Int
+  currency       String @default("BRL")
+  direction      String
+  status         String
+  providerCategory String?
+  suggestedCategory String?
+  operationType  String?
+  billExternalId String?
+  installmentNumber Int?
+  totalInstallments Int?
+  referenceMonth String?
+  reviewStatus   String @default("NEW")
+  linkedKind     String?
+  linkedId       String?
+  reviewedAt     DateTime?
+  lastSeenAt     DateTime @default(now())
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account        BankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@unique([accountId, stableKey])
+  @@index([userId, date, reviewStatus])
+  @@index([accountId, externalId])
+  @@unique([userId, linkedKind, linkedId])
+}
+
+model BankBill {
+  id             String @id @default(cuid())
+  accountId      String
+  externalId     String
+  dueDate        DateTime
+  closingDate    DateTime?
+  totalCents     Int
+  currency       String
+  account        BankAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@unique([accountId, externalId])
 }
